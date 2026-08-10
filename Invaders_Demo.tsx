@@ -526,8 +526,13 @@ export default function Invaders(props: InvadersProps){
       if(e.code==="ArrowLeft"||e.code==="ArrowRight"||e.code==="ArrowUp"||e.code==="ArrowDown"||e.code==="Space") e.preventDefault();
       keysRef.current[e.code] = e.type === "keydown";
     };
+    // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
+    // keyup never fires and the key stays stuck "down" forever — release all keys.
+    const onBlur = (): void => { keysRef.current = {}; };
     window.addEventListener("keydown",onKey);
     window.addEventListener("keyup",onKey);
+    window.addEventListener("blur",onBlur);
+    document.addEventListener("visibilitychange",onBlur);
     // The artifact iframe needs focus before it receives key events.
     containerRef.current?.focus();
 
@@ -808,6 +813,8 @@ export default function Invaders(props: InvadersProps){
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("keydown",onKey);
       window.removeEventListener("keyup",onKey);
+      window.removeEventListener("blur",onBlur);
+      document.removeEventListener("visibilitychange",onBlur);
       canvas.removeEventListener("touchstart",onTouchStart);
       canvas.removeEventListener("touchmove",onTouchMove);
       canvas.removeEventListener("touchend",onTouchEnd);
