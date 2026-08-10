@@ -255,7 +255,11 @@ export default function BossArena() {
     const ctx = canvas.getContext("2d")!;
 
     const onKey = (e: KeyboardEvent): void => { keysRef.current[e.code] = e.type === "keydown"; };
+    // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
+    // keyup never fires and the key stays stuck "down" forever — release all keys.
+    const onBlur = (): void => { keysRef.current = {}; };
     window.addEventListener("keydown", onKey); window.addEventListener("keyup", onKey);
+    window.addEventListener("blur", onBlur); document.addEventListener("visibilitychange", onBlur);
 
     const rectX = (cx: number): number => {
       const r = canvas.getBoundingClientRect();
@@ -407,6 +411,7 @@ export default function BossArena() {
     return () => {
       cancelAnimationFrame(animRef.current);
       window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onKey);
+      window.removeEventListener("blur", onBlur); document.removeEventListener("visibilitychange", onBlur);
       canvas.removeEventListener("touchstart", onTS); canvas.removeEventListener("touchmove", onTM); canvas.removeEventListener("touchend", onTE);
     };
   }, []);
