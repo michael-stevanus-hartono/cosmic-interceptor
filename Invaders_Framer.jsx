@@ -505,6 +505,8 @@ function Invaders(props) {
     measureInit();
   }, [speed, startLives, startOnBoss, measureInit]);
   useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const onKey = (e) => {
       if (e.code === "ArrowLeft" || e.code === "ArrowRight" || e.code === "ArrowUp" || e.code === "ArrowDown" || e.code === "Space") e.preventDefault();
       keysRef.current[e.code] = e.type === "keydown";
@@ -517,8 +519,6 @@ function Invaders(props) {
     window.addEventListener("blur", onBlur);
     document.addEventListener("visibilitychange", onBlur);
     containerRef.current?.focus();
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const ctx = canvas.getContext("2d");
     const onTouchStart = (e) => {
       e.preventDefault();

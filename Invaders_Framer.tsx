@@ -522,6 +522,8 @@ export default function Invaders(props: InvadersProps){
   useEffect(()=>{ measureInit(); },[speed, startLives, startOnBoss, measureInit]);
 
   useEffect(()=>{
+    const canvas = canvasRef.current;
+    if (!canvas) return;
     const onKey = (e: KeyboardEvent): void => {
       if(e.code==="ArrowLeft"||e.code==="ArrowRight"||e.code==="ArrowUp"||e.code==="ArrowDown"||e.code==="Space") e.preventDefault();
       keysRef.current[e.code] = e.type === "keydown";
@@ -536,8 +538,6 @@ export default function Invaders(props: InvadersProps){
     // The artifact iframe needs focus before it receives key events.
     containerRef.current?.focus();
 
-    const canvas = canvasRef.current;
-    if (!canvas) return;
     const ctx = canvas.getContext("2d")!;
 
     const onTouchStart = (e: TouchEvent): void => {
