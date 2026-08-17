@@ -420,7 +420,7 @@ function drawBeamTelegraph(ctx: CanvasRenderingContext2D, cx: number, originY: n
 }
 
 // Sustained beam: layered orange column, white-hot center, origin flare
-function drawBeam(ctx: CanvasRenderingContext2D, cx: number, originY: number, H: number, sc: number, t: number, hw: number): void {
+function drawBeam(ctx: CanvasRenderingContext2D, cx: number, originY: number, H: number, _sc: number, t: number, hw: number): void {
   const halfW = hw;
   const fl = 1 + Math.sin(t*0.9)*0.08 + Math.sin(t*2.3)*0.04;
   ctx.save();
