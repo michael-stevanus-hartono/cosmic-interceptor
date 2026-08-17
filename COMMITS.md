@@ -1,7 +1,20 @@
-# Invaders — Commit Checkpoint Log
+# Cosmic Interceptor — Pre-Git Checkpoint Log
 
-Chronological commit history (oldest → newest). Each entry is a checkpoint you can
-reference or roll back to.
+> **This file is a historical record only.** It logs the work done *before* the
+> project had a git repository, when the game was built iteratively in Claude
+> conversations and only the final code was kept. None of these entries
+> correspond to real commits, and the intermediate states no longer exist.
+>
+> **Git history is authoritative for everything from the initial import onward.**
+> Use `git log` rather than this file:
+>
+> ```bash
+> git log --oneline
+> ```
+>
+> The import commit is `c705cd6`. Everything after it — the stuck-key and
+> auto-fire fixes, the Vite scaffold, audio, and the title/game-over/win
+> screens — is in real history with real diffs.
 
 ---
 
@@ -157,7 +170,10 @@ style(demo): fixed 4:3 landscape preview window (800×600) at native scale
 
 ---
 
-## Current file map
+## File map at the end of the pre-git era
+
+This was the layout when the code was first imported into git. It is **no longer
+current** — see `GAME_DOC.md` for the live file map.
 
 - `Invaders.tsx` / `.jsx` — the game (playable, full-screen). `VISUAL_PAUSE=false`.
 - `Invaders_Framer.tsx` — Framer code component (annotations + sizing + controls), wave 1.
@@ -165,3 +181,7 @@ style(demo): fixed 4:3 landscape preview window (800×600) at native scale
 - `Invaders_Demo_preview.jsx` — plain-React 4:3 preview of the self-playing demo.
 - `BossArena.tsx` / `.jsx` — standalone boss sandbox (PART 1 / PART 2 presets).
 - `GAME_DOC.md` — overview, version table, parameter reference, next steps.
+
+All of these except `Invaders.tsx` and `GAME_DOC.md` were deleted when the
+project committed to a single-file Vercel deploy. Recover any of them from git
+history if needed, e.g. `git show b6b0285:BossArena.tsx`.
