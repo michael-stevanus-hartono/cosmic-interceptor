@@ -17,6 +17,54 @@ const MAX_LIVES = 5;
 const SPEED = 1.5;
 const MAX_SCORE = 640;
 const SCORE_DIGITS = String(MAX_SCORE).length;
+
+// ── Sound — tiny Web Audio synth, no assets. The muted flag lives inside the
+// closure so the game loop can fire-and-forget without touching React state. ──
+const MUTE_BTN = 30;   // speaker button size (CSS px at sc=1); the score HUD shifts right past it
+function makeSfx() {
+  let ctx = null;
+  let muted = false;
+  const ensure = () => {
+    if (typeof window === "undefined") return null;
+    const AC = window.AudioContext ?? window.webkitAudioContext;
+    if (!AC) return null;
+    if (!ctx) ctx = new AC();
+    if (ctx.state === "suspended") void ctx.resume();
+    return ctx;
+  };
+  const blip = (f0, f1, dur, type, vol) => {
+    if (muted) return;
+    const ac = ensure();
+    if (!ac || ac.state !== "running") return;   // before the first user gesture: stay silent
+    const t0 = ac.currentTime;
+    const osc = ac.createOscillator(), g = ac.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(f0, t0);
+    osc.frequency.exponentialRampToValueAtTime(f1, t0 + dur);
+    g.gain.setValueAtTime(vol, t0);
+    g.gain.exponentialRampToValueAtTime(0.001, t0 + dur);
+    osc.connect(g); g.connect(ac.destination);
+    osc.start(t0); osc.stop(t0 + dur);
+  };
+  return {
+    unlock() { void ensure(); },                          // call from inside a user gesture
+    setMuted(m) { muted = m; },
+    shoot() { blip(880, 320, 0.07, "square", 0.05); },        // player: bright descending pew
+    enemyShoot() { blip(240, 90, 0.12, "sawtooth", 0.06); },  // enemy/boss: low buzzy zap
+    dispose() { void ctx?.close(); ctx = null; },
+  };
+}
+
+// The jet/HUD scale. Shared by initGame and the render pass so the DOM speaker
+// button lines up with the canvas-drawn score at any viewport size.
+function scaleFor(W, H, mobile) {
+  return mobile ? W / 360 * 0.85 : Math.min(W / 900, H / 560);
+}
+// Speaker button box, vertically centered against the two-line score block.
+function muteBox(sc) {
+  const size = Math.round(MUTE_BTN * Math.min(1.6, Math.max(0.85, sc)));
+  return { size, left: Math.round(12 * sc), top: Math.max(4, Math.round(23 * sc - size / 2)) };
+}
 const HEART = [
   [0, 1, 1, 0, 1, 1, 0],
   [1, 1, 1, 1, 1, 1, 1],
@@ -428,7 +476,7 @@ function makeWave(wave, W, H, sc, mobile) {
   }));
 }
 function initGame(W, H, mobile) {
-  const sc = mobile ? W / 360 * 0.85 : Math.min(W / 900, H / 560);
+  const sc = scaleFor(W, H, mobile);
   const playerY = mobile ? H * 0.78 : H * 0.88;
   return {
     t: 0,
@@ -463,6 +511,18 @@ function InvadersGame() {
   const [phase, setPhase] = useState("waves");
   const [dims, setDims] = useState(getDims());
   const [previewWave, setPreviewWave] = useState(1);
+  const sfxRef = useRef(makeSfx());
+  const [muted, setMuted] = useState(false);
+  const toggleMute = useCallback(() => {
+    setMuted(m => {
+      const next = !m;
+      sfxRef.current.setMuted(next);
+      if (!next) sfxRef.current.unlock();   // unmuting is a gesture — a good moment to unlock audio
+      return next;
+    });
+    containerRef.current?.focus();          // hand keyboard focus back to the game
+  }, []);
+  useEffect(() => { const sfx = sfxRef.current; return () => sfx.dispose(); }, []);
   const restart = useCallback(() => {
     const { W, H, mobile } = dims;
     stateRef.current = initGame(W, H, mobile);
@@ -504,6 +564,10 @@ function InvadersGame() {
     const onKey = (e) => {
       if (e.code === "ArrowLeft" || e.code === "ArrowRight" || e.code === "ArrowUp" || e.code === "ArrowDown" || e.code === "Space") e.preventDefault();
       keysRef.current[e.code] = e.type === "keydown";
+      if (e.type === "keydown") {
+        sfxRef.current.unlock();          // audio needs a user gesture once
+        if (e.code === "KeyM") toggleMute();
+      }
     };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
     // keyup never fires and the key stays stuck "down" forever — release all keys.
@@ -573,6 +637,7 @@ function InvadersGame() {
       if (firing && s.fireCD <= 0 && !inIntro) {
         s.bullets.push({ x: p.x, y: p.y - 20 * sc, w: 4 * sc, h: 14 * sc });
         s.fireCD = Math.round(14 / SPEED);
+        sfxRef.current.shoot();
       }
       const bspd = 9 * sc * SPEED, espd = 4 * sc * SPEED;
       s.bullets = s.bullets.filter((b) => {
@@ -605,6 +670,7 @@ function InvadersGame() {
           if (alive2.length) {
             const e = alive2[Math.floor(Math.random() * alive2.length)];
             s.enemyBullets.push({ x: e.x, y: e.y + 10 * sc, vx: rand(-0.5, 0.5) * sc });
+            sfxRef.current.enemyShoot();
           }
           s.enemyFireCD = Math.max(25, 60 - s.wave * 5);
         }
@@ -679,6 +745,7 @@ function InvadersGame() {
             const ang = Math.atan2(p.y - oy, p.x - ox);
             s.enemyBullets.push({ x: ox, y: oy, vx: Math.cos(ang) * espd * 0.9, vy: Math.max(1.2 * sc, Math.sin(ang) * espd * 0.9), r: 3 * sc, color: "#ff5a4a" });
           });
+          sfxRef.current.enemyShoot();   // one cue for the salvo, not one per barrel
           m.sideCD = part.sideCD;
         }
         if (part.beam) {
@@ -793,14 +860,17 @@ function InvadersGame() {
       });
       ctx.globalAlpha = 1;
       const pad = 12 * sc;
+      // Score clears the speaker button, which is a DOM overlay sharing muteBox().
+      const mbox = muteBox(sc);
+      const scoreX = mbox.left + mbox.size + Math.round(10 * sc);
       ctx.textBaseline = "top";
       ctx.textAlign = "left";
       ctx.fillStyle = "#5a6b88";
       ctx.font = `bold ${Math.round(10 * sc)}px ${FONT}`;
-      ctx.fillText("SCORE:", pad, 8 * sc);
+      ctx.fillText("SCORE:", scoreX, 8 * sc);
       ctx.fillStyle = "#9fb4d6";
       ctx.font = `bold ${Math.round(16 * sc)}px ${FONT}`;
-      ctx.fillText(String(s.score).padStart(SCORE_DIGITS, "0"), pad, 20 * sc);
+      ctx.fillText(String(s.score).padStart(SCORE_DIGITS, "0"), scoreX, 20 * sc);
       ctx.textAlign = "center";
       ctx.fillStyle = "#5a6b88";
       ctx.font = `bold ${Math.round(11 * sc)}px ${FONT}`;
@@ -844,10 +914,17 @@ function InvadersGame() {
       canvas.removeEventListener("touchend", onTouchEnd);
       canvas.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [dims]);
+  }, [dims, toggleMute]);
   const navBtn = { pointerEvents: "auto", width: 46, height: 46, borderRadius: 10, border: "1px solid #3a4a6a", background: "rgba(16,26,46,0.9)", color: "#cdd9f0", fontSize: 18, cursor: "pointer" };
   const overlayStyle = { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, background: "rgba(5,10,26,0.82)" };
   const restartBtn = { padding: "12px 28px", borderRadius: 10, border: "1px solid #3a4a6a", background: "#101a2e", color: "#cdd9f0", fontSize: 16, fontWeight: "bold", letterSpacing: 1, cursor: "pointer" };
+  const mbox = muteBox(scaleFor(dims.W, dims.H, dims.mobile));
+  const muteBtn = {
+    position: "absolute", left: mbox.left, top: mbox.top, width: mbox.size, height: mbox.size,
+    display: "grid", placeItems: "center", padding: 0, lineHeight: 0,
+    borderRadius: Math.round(mbox.size * 0.27), border: "1px solid #2a3a5a",
+    background: "rgba(16,26,46,0.72)", color: muted ? "#5a6b88" : "#9fb4d6", cursor: "pointer",
+  };
   return <div
     ref={containerRef}
     tabIndex={0}
@@ -855,6 +932,22 @@ function InvadersGame() {
     style={{ position: "relative", width: "100vw", height: "100vh", background: "#050a1a", touchAction: "none", overflow: "hidden", fontFamily: FONT, outline: "none" }}
   >
       <canvas ref={canvasRef} width={dims.W} height={dims.H} style={{ display: "block", width: "100%", height: "100%" }} />
+
+      <button
+        onClick={toggleMute}
+        style={muteBtn}
+        aria-pressed={muted}
+        aria-label={muted ? "Unmute sound effects" : "Mute sound effects"}
+        title={muted ? "Sound off — press M" : "Sound on — press M"}
+      >
+        <svg width={Math.round(mbox.size * 0.6)} height={Math.round(mbox.size * 0.6)} viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M4 9h3.2L12 5v14l-4.8-4H4z" fill="currentColor" />
+          {muted ? <path d="M16 9.5l5.5 5.5M21.5 9.5L16 15" stroke="currentColor" strokeWidth={2} strokeLinecap="round" /> : <>
+            <path d="M15.6 9.2a4 4 0 010 5.6" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+            <path d="M18.6 6.6a8 8 0 010 10.8" stroke="currentColor" strokeWidth={2} strokeLinecap="round" />
+          </>}
+        </svg>
+      </button>
 
       {VISUAL_PAUSE && <div style={{ position: "absolute", left: 0, right: 0, bottom: 18, display: "flex", justifyContent: "center", alignItems: "center", gap: 18, pointerEvents: "none" }}>
           <button onClick={() => setPreviewWave((w) => w > 1 ? w - 1 : 4)} style={navBtn} aria-label="Previous">◀</button>
