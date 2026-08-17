@@ -255,7 +255,7 @@ function BossArena() {
     };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
     // keyup never fires and the key stays stuck "down" forever — release all keys.
-    const onBlur = () => { keysRef.current = {}; };
+    const onBlur = () => { keysRef.current = {}; touchRef.current.active = false; };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     window.addEventListener("blur", onBlur);
@@ -279,6 +279,7 @@ function BossArena() {
     canvas.addEventListener("touchstart", onTS, { passive: false });
     canvas.addEventListener("touchmove", onTM, { passive: false });
     canvas.addEventListener("touchend", onTE, { passive: false });
+    canvas.addEventListener("touchcancel", onTE, { passive: false });
     function addParticles(x, y, color, n = 10) {
       const s = stateRef.current;
       if (!s) return;
@@ -483,6 +484,7 @@ function BossArena() {
       canvas.removeEventListener("touchstart", onTS);
       canvas.removeEventListener("touchmove", onTM);
       canvas.removeEventListener("touchend", onTE);
+      canvas.removeEventListener("touchcancel", onTE);
     };
   }, []);
   const wrap = { display: "flex", flexDirection: "column", alignItems: "center", gap: 12, fontFamily: FONT, background: "#070b1c", padding: 16, borderRadius: 12 };

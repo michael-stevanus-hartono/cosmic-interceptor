@@ -257,7 +257,7 @@ export default function BossArena() {
     const onKey = (e: KeyboardEvent): void => { keysRef.current[e.code] = e.type === "keydown"; };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
     // keyup never fires and the key stays stuck "down" forever — release all keys.
-    const onBlur = (): void => { keysRef.current = {}; };
+    const onBlur = (): void => { keysRef.current = {}; touchRef.current.active = false; };
     window.addEventListener("keydown", onKey); window.addEventListener("keyup", onKey);
     window.addEventListener("blur", onBlur); document.addEventListener("visibilitychange", onBlur);
 
@@ -271,6 +271,7 @@ export default function BossArena() {
     canvas.addEventListener("touchstart", onTS, { passive: false });
     canvas.addEventListener("touchmove", onTM, { passive: false });
     canvas.addEventListener("touchend", onTE, { passive: false });
+    canvas.addEventListener("touchcancel", onTE, { passive: false });
 
     function addParticles(x: number, y: number, color: string, n = 10): void {
       const s = stateRef.current; if (!s) return;
@@ -413,6 +414,7 @@ export default function BossArena() {
       window.removeEventListener("keydown", onKey); window.removeEventListener("keyup", onKey);
       window.removeEventListener("blur", onBlur); document.removeEventListener("visibilitychange", onBlur);
       canvas.removeEventListener("touchstart", onTS); canvas.removeEventListener("touchmove", onTM); canvas.removeEventListener("touchend", onTE);
+      canvas.removeEventListener("touchcancel", onTE);
     };
   }, []);
 

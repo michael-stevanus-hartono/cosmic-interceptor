@@ -513,7 +513,7 @@ function Invaders(props) {
     };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
     // keyup never fires and the key stays stuck "down" forever — release all keys.
-    const onBlur = () => { keysRef.current = {}; };
+    const onBlur = () => { keysRef.current = {}; touchState.current.active = false; };
     window.addEventListener("keydown", onKey);
     window.addEventListener("keyup", onKey);
     window.addEventListener("blur", onBlur);
@@ -537,6 +537,7 @@ function Invaders(props) {
     canvas.addEventListener("touchstart", onTouchStart, { passive: false });
     canvas.addEventListener("touchmove", onTouchMove, { passive: false });
     canvas.addEventListener("touchend", onTouchEnd, { passive: false });
+    canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
     function addParticles(x, y, color, n = 10) {
       const s = stateRef.current;
       if (!s) return;
@@ -847,6 +848,7 @@ function Invaders(props) {
       canvas.removeEventListener("touchstart", onTouchStart);
       canvas.removeEventListener("touchmove", onTouchMove);
       canvas.removeEventListener("touchend", onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchEnd);
     };
   }, [dims]);
   const navBtn = { pointerEvents: "auto", width: 46, height: 46, borderRadius: 10, border: "1px solid #3a4a6a", background: "rgba(16,26,46,0.9)", color: "#cdd9f0", fontSize: 18, cursor: "pointer" };

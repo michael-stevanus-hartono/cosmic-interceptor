@@ -522,7 +522,7 @@ export default function InvadersGame(){
     };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
     // keyup never fires and the key stays stuck "down" forever — release all keys.
-    const onBlur = (): void => { keysRef.current = {}; };
+    const onBlur = (): void => { keysRef.current = {}; touchState.current.active = false; };
     window.addEventListener("keydown",onKey);
     window.addEventListener("keyup",onKey);
     window.addEventListener("blur",onBlur);
@@ -547,6 +547,7 @@ export default function InvadersGame(){
     canvas.addEventListener("touchstart",onTouchStart,{passive:false});
     canvas.addEventListener("touchmove",onTouchMove,{passive:false});
     canvas.addEventListener("touchend",onTouchEnd,{passive:false});
+    canvas.addEventListener("touchcancel", onTouchEnd, { passive: false });
 
 
     function addParticles(x: number, y: number, color: string, n = 10): void {
@@ -791,6 +792,7 @@ export default function InvadersGame(){
       canvas.removeEventListener("touchstart",onTouchStart);
       canvas.removeEventListener("touchmove",onTouchMove);
       canvas.removeEventListener("touchend",onTouchEnd);
+      canvas.removeEventListener("touchcancel", onTouchEnd);
     };
   },[dims]);
 
