@@ -588,10 +588,12 @@ export default function Invaders(props: InvadersProps){
       if(keys["ArrowLeft"]||keys["KeyA"]) p.x=Math.max(p.w/2,p.x-spd);
       if(keys["ArrowRight"]||keys["KeyD"]) p.x=Math.min(W-p.w/2,p.x+spd);
 
-      // Auto-fire continuously while the game is active (no fire button; keeps
-      // shooting even while holding position, and works before keyboard focus).
+      // Fire while a control is held — touch on mobile, or a move/fire key on desktop.
+      // (Releasing everything stops the shooting.)
+      const moveHeld = keys["ArrowLeft"]||keys["ArrowRight"]||keys["KeyA"]||keys["KeyD"];
+      const firing = mobile ? touchState.current.active : (moveHeld||keys["Space"]||keys["ArrowUp"]);
       s.fireCD--;
-      if(s.fireCD<=0 && !inIntro){
+      if(firing && s.fireCD<=0 && !inIntro){
         s.bullets.push({x:p.x,y:p.y-20*sc,w:4*sc,h:14*sc}); s.fireCD = Math.round(14/s.speed);
       }
 
