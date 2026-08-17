@@ -831,9 +831,12 @@ export default function InvadersGame(){
       for(let i=0;i<n;i++) s.particles.push({x,y,vx:rand(-4,4),vy:rand(-5,1),life:1,color,size:rand(3,7)});
     }
 
-    function loop(): void {
+    // One simulation tick. Every speed and cooldown in here is expressed in
+    // frames at 60Hz, so `frame()` below is responsible for calling this at a
+    // fixed 60Hz regardless of the display's actual refresh rate.
+    function step(): void {
       const s = stateRef.current;
-      if (!s) { animRef.current = requestAnimationFrame(loop); return; }
+      if (!s) return;
       const keys = keysRef.current;
       const {sc,mobile}=s;
       s.t++;
@@ -841,7 +844,7 @@ export default function InvadersGame(){
       // Title screen: no ship, no waves, no HUD — just the wordmark over the starfield.
       if(s.phase==="title"){
         drawTitleScreen(ctx, W, H, sc, s.t, s.stars, mobile);
-        animRef.current=requestAnimationFrame(loop); return;
+        return;
       }
 
       // Both endings share one screen and one countdown; only the wordmark,
@@ -861,7 +864,7 @@ export default function InvadersGame(){
           : { lines:["GAME","OVER"], fill:OVER_FILL, edge:OVER_EDGE, action:"RETRY", secsLeft,
               stats:[["SCORE", scoreStr], ["REACHED", s.wave > 3 ? "FINAL BOSS" : `WAVE ${s.wave}`]] });
         if(elapsed >= GAMEOVER_SECS) restart();
-        animRef.current=requestAnimationFrame(loop); return;
+        return;
       }
 
       const inIntro = (s.introT > 0) || VISUAL_PAUSE;
@@ -1077,12 +1080,27 @@ export default function InvadersGame(){
         hx+=hw+hgap;
       }
       ctx.textBaseline="alphabetic";
-
-      ctx.textBaseline="alphabetic";
-
-      animRef.current=requestAnimationFrame(loop);
     }
-    animRef.current=requestAnimationFrame(loop);
+
+    // ── Fixed-timestep driver ────────────────────────────────────────────────
+    // The simulation is frame-counted, so running it once per rAF tied its speed
+    // to the refresh rate: 2x on a 120Hz panel. Phones make that worse by ramping
+    // the panel from ~60Hz to 120Hz the moment you touch the screen, so the game
+    // visibly doubled speed mid-drag. Accumulate real elapsed time instead and
+    // spend it in whole 60Hz ticks, which keeps every tuned constant valid.
+    const STEP_MS = 1000/60;
+    const MAX_CATCHUP = 3;     // cap so a long stall can't trigger a burst of ticks
+    let acc = 0, last = 0;
+    function frame(now: number): void {
+      if(last === 0) last = now;
+      acc += Math.min(now - last, 250);   // clamp: returning from a background tab
+      last = now;
+      let ran = 0;
+      while(acc >= STEP_MS && ran < MAX_CATCHUP){ step(); acc -= STEP_MS; ran++; }
+      if(ran === MAX_CATCHUP) acc = 0;    // gave up catching up; drop the backlog
+      animRef.current = requestAnimationFrame(frame);
+    }
+    animRef.current = requestAnimationFrame(frame);
 
     return ()=>{
       cancelAnimationFrame(animRef.current);
