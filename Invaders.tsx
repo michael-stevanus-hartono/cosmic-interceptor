@@ -141,21 +141,26 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
   const cell = Math.max(2, Math.min((W*0.78)/wide, (H*0.42)/tallCells));
   const blockH = tallCells*cell;
-  let top = H*0.40 - blockH/2;
+  const blockTop = H*0.40 - blockH/2;
+  let top = blockTop;
   for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
 
-  // Terminal-style prompt with a blinking block cursor.
+  // Terminal-style prompt with a blinking block cursor. On mobile it sits a
+  // fixed 32px below the wordmark — the proportional gap read far too wide on
+  // a tall phone viewport. Desktop keeps its lower, roomier placement.
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
-  ctx.textBaseline="alphabetic"; ctx.textAlign="left";
-  ctx.font=`bold ${Math.round(13*sc)}px ${FONT}`;
-  const tw = ctx.measureText(msg).width, cw = Math.round(9*sc), y = H*0.74;
+  const fpx = Math.round(13*sc);
+  ctx.textBaseline="top"; ctx.textAlign="left";
+  ctx.font=`bold ${fpx}px ${FONT}`;
+  const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
+  const y = mobile ? blockTop + blockH + 32 : H*0.74 - fpx;
   const px = W/2 - (tw + 5*sc + cw)/2;
   ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, y);
   if(Math.floor(t/28)%2===0){
     ctx.fillStyle=TITLE_FILL;
-    ctx.fillRect(px + tw + 5*sc, y - 11*sc, cw, 13*sc);
+    ctx.fillRect(px + tw + 5*sc, y, cw, fpx);
   }
-  ctx.textAlign="center";
+  ctx.textAlign="center"; ctx.textBaseline="alphabetic";
 }
 
 interface Sfx { unlock(): void; setMuted(m: boolean): void; shoot(): void; enemyShoot(): void; dispose(): void; }
