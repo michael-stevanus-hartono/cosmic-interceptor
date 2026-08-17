@@ -479,6 +479,7 @@ function InvadersGame() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
   useEffect(() => {
+    if (!VISUAL_PAUSE) return;  // dev tool only — must not touch live game state on resize
     const s = stateRef.current;
     if (!s) return;
     const { W, H, mobile } = dims;
