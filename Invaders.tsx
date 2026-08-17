@@ -69,7 +69,8 @@ function muteBox(sc: number): { size: number; left: number; top: number } {
 // "Space Invaders" is a registered trademark of Taito (USPTO 88984221, live in
 // the entertainment-services class), so the game ships under its own name.
 // Swap this one string to retitle; "\n" splits lines and the block auto-fits.
-const TITLE = "VOID\nINVADERS";
+// VOID INVADERS was rejected too: existing Steam shoot-em-up of the same name.
+const TITLE = "LAST\nINTERCEPTOR";
 const TITLE_FILL = "#d97757";   // Claude coral
 const TITLE_EDGE = "#ff6b35";   // brighter offset edge, terminal-poster look
 
