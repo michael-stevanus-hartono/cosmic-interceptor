@@ -18,6 +18,99 @@ const SPEED = 1.5;
 const MAX_SCORE = 640;
 const SCORE_DIGITS = String(MAX_SCORE).length;
 
+// ── Title screen ──────────────────────────────────────────────────────────
+// "Space Invaders" is a registered trademark of Taito (USPTO 88984221, live in
+// the entertainment-services class), so the game ships under its own name.
+// Swap this one string to retitle; "\n" splits lines and the block auto-fits.
+const TITLE = "VOID\nINVADERS";
+const TITLE_FILL = "#d97757";   // Claude coral
+const TITLE_EDGE = "#ff6b35";   // brighter offset edge, terminal-poster look
+
+// Blocky 5x7 uppercase font — drawn as separated cells so the letterforms read
+// as a grid of blocks rather than solid strokes.
+const GLYPH_W = 5, GLYPH_H = 7;
+const FONT5X7 = {
+  " ": "0000000000000000000000000000000000000",
+  A: "11111" + "10001" + "10001" + "11111" + "10001" + "10001" + "10001",
+  B: "11110" + "10001" + "10001" + "11110" + "10001" + "10001" + "11110",
+  C: "11111" + "10000" + "10000" + "10000" + "10000" + "10000" + "11111",
+  D: "11110" + "10001" + "10001" + "10001" + "10001" + "10001" + "11110",
+  E: "11111" + "10000" + "10000" + "11110" + "10000" + "10000" + "11111",
+  F: "11111" + "10000" + "10000" + "11110" + "10000" + "10000" + "10000",
+  G: "11111" + "10000" + "10000" + "10111" + "10001" + "10001" + "11111",
+  H: "10001" + "10001" + "10001" + "11111" + "10001" + "10001" + "10001",
+  I: "11111" + "00100" + "00100" + "00100" + "00100" + "00100" + "11111",
+  J: "00111" + "00010" + "00010" + "00010" + "00010" + "10010" + "11110",
+  K: "10001" + "10010" + "10100" + "11000" + "10100" + "10010" + "10001",
+  L: "10000" + "10000" + "10000" + "10000" + "10000" + "10000" + "11111",
+  M: "10001" + "11011" + "10101" + "10001" + "10001" + "10001" + "10001",
+  N: "10001" + "11001" + "10101" + "10011" + "10001" + "10001" + "10001",
+  O: "11111" + "10001" + "10001" + "10001" + "10001" + "10001" + "11111",
+  P: "11111" + "10001" + "10001" + "11111" + "10000" + "10000" + "10000",
+  Q: "11111" + "10001" + "10001" + "10001" + "10101" + "10010" + "11101",
+  R: "11111" + "10001" + "10001" + "11111" + "10100" + "10010" + "10001",
+  S: "11111" + "10000" + "10000" + "11111" + "00001" + "00001" + "11111",
+  T: "11111" + "00100" + "00100" + "00100" + "00100" + "00100" + "00100",
+  U: "10001" + "10001" + "10001" + "10001" + "10001" + "10001" + "11111",
+  V: "10001" + "10001" + "10001" + "10001" + "10001" + "01010" + "00100",
+  W: "10001" + "10001" + "10001" + "10001" + "10101" + "11011" + "10001",
+  X: "10001" + "10001" + "01010" + "00100" + "01010" + "10001" + "10001",
+  Y: "10001" + "10001" + "01010" + "00100" + "00100" + "00100" + "00100",
+  Z: "11111" + "00001" + "00010" + "00100" + "01000" + "10000" + "11111",
+};
+// Width in cells, including one cell of letter-spacing between glyphs.
+function titleCells(line) {
+  return line.length * GLYPH_W + Math.max(0, line.length - 1);
+}
+// Two passes: an offset copy for the edge, then the fill on top. Where they
+// overlap the fill wins, leaving the thin bottom-right edge.
+function drawPixelText(ctx, line, cx, top, cell) {
+  const gap = Math.max(1, Math.floor(cell*0.14));      // the grid line between cells
+  const off = Math.max(2, Math.round(cell*0.34));      // edge offset
+  const x0 = Math.round(cx - (titleCells(line)*cell)/2);
+  for(const edge of [true, false]){
+    ctx.fillStyle = edge ? TITLE_EDGE : TITLE_FILL;
+    const d = edge ? off : 0;
+    let cur = x0;
+    for(const ch of line.toUpperCase()){
+      const g = FONT5X7[ch] ?? FONT5X7[" "];
+      for(let r=0;r<GLYPH_H;r++) for(let c=0;c<GLYPH_W;c++){
+        if(g[r*GLYPH_W+c] !== "1") continue;
+        ctx.fillRect(cur + c*cell + d, top + r*cell + d, cell-gap, cell-gap);
+      }
+      cur += (GLYPH_W+1)*cell;
+    }
+  }
+}
+
+function drawTitleScreen(ctx, W, H, sc, t, stars, mobile) {
+  ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
+  stars.forEach(st=>{ ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
+  ctx.globalAlpha=1;
+
+  const lines = TITLE.split("\n");
+  const wide = Math.max(...lines.map(titleCells));
+  const LINE_GAP = 2;                                   // cells between lines
+  const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
+  const cell = Math.max(2, Math.min((W*0.78)/wide, (H*0.42)/tallCells));
+  const blockH = tallCells*cell;
+  let top = H*0.40 - blockH/2;
+  for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
+
+  // Terminal-style prompt with a blinking block cursor.
+  const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
+  ctx.textBaseline="alphabetic"; ctx.textAlign="left";
+  ctx.font=`bold ${Math.round(13*sc)}px ${FONT}`;
+  const tw = ctx.measureText(msg).width, cw = Math.round(9*sc), y = H*0.74;
+  const px = W/2 - (tw + 5*sc + cw)/2;
+  ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, y);
+  if(Math.floor(t/28)%2===0){
+    ctx.fillStyle=TITLE_FILL;
+    ctx.fillRect(px + tw + 5*sc, y - 11*sc, cw, 13*sc);
+  }
+  ctx.textAlign="center";
+}
+
 // ── Sound — tiny Web Audio synth, no assets. The muted flag lives inside the
 // closure so the game loop can fire-and-forget without touching React state. ──
 const MUTE_BTN = 30;   // speaker button size (CSS px at sc=1); the score HUD shifts right past it
@@ -487,7 +580,7 @@ function initGame(W, H, mobile) {
     enemyBullets: [],
     enemies: makeWave(1, W, H, sc, mobile),
     mothership: { x: W / 2, y: 150 * sc, w: BOSS_COLS * BOSS_PX(sc), h: BOSS_ROWS * BOSS_PX(sc), hp: 30, maxHp: 30, vx: 1.5 * sc * SPEED, sideCD: 0, coreCD: Math.floor(rand(5, 7) * 60), chargeT: 0, beamT: 0 },
-    phase: "waves",
+    phase: "title",
     wave: 1,
     score: 0,
     lives: MAX_LIVES,
@@ -508,7 +601,7 @@ function InvadersGame() {
   const animRef = useRef(0);
   const keysRef = useRef({});
   const touchState = useRef({ active: false, x: null });
-  const [phase, setPhase] = useState("waves");
+  const [phase, setPhase] = useState("title");
   const [dims, setDims] = useState(getDims());
   const [previewWave, setPreviewWave] = useState(1);
   const sfxRef = useRef(makeSfx());
@@ -525,9 +618,20 @@ function InvadersGame() {
   useEffect(() => { const sfx = sfxRef.current; return () => sfx.dispose(); }, []);
   const restart = useCallback(() => {
     const { W, H, mobile } = dims;
-    stateRef.current = initGame(W, H, mobile);
+    const s = initGame(W, H, mobile);
+    s.phase = "waves";                     // PLAY AGAIN drops straight into a run
+    stateRef.current = s;
     setPhase("waves");
   }, [dims]);
+  // Leave the title screen. Bound to Enter/Space and to a tap anywhere.
+  const startRun = useCallback(() => {
+    const s = stateRef.current;
+    if (!s || s.phase !== "title") return;
+    s.phase = "waves"; s.introT = 180;
+    setPhase("waves");
+    sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
+  }, []);
+
   useEffect(() => {
     const onResize = () => {
       const d = getDims();
@@ -567,6 +671,7 @@ function InvadersGame() {
       if (e.type === "keydown") {
         sfxRef.current.unlock();          // audio needs a user gesture once
         if (e.code === "KeyM") toggleMute();
+        if (e.code === "Enter" || e.code === "Space") startRun();
       }
     };
     // If focus leaves mid-hold (alt-tab, click outside the iframe) the matching
@@ -580,6 +685,7 @@ function InvadersGame() {
     const ctx = canvas.getContext("2d");
     const onTouchStart = (e) => {
       e.preventDefault();
+      startRun();
       const rect = canvas.getBoundingClientRect();
       touchState.current = { active: true, x: (e.touches[0].clientX - rect.left) * (canvas.width / rect.width) };
     };
@@ -610,6 +716,12 @@ function InvadersGame() {
       const keys = keysRef.current;
       const { sc, mobile: mobile2 } = s;
       s.t++;
+      // Title screen: no ship, no waves, no HUD — just the wordmark over the starfield.
+      if (s.phase === "title") {
+        drawTitleScreen(ctx, W, H, sc, s.t, s.stars, mobile);
+        animRef.current = requestAnimationFrame(loop); return;
+      }
+
       if (s.phase === "dead" || s.phase === "won") {
         setPhase(s.phase);
         animRef.current = requestAnimationFrame(loop);
@@ -914,7 +1026,7 @@ function InvadersGame() {
       canvas.removeEventListener("touchend", onTouchEnd);
       canvas.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [dims, toggleMute]);
+  }, [dims, toggleMute, startRun]);
   const navBtn = { pointerEvents: "auto", width: 46, height: 46, borderRadius: 10, border: "1px solid #3a4a6a", background: "rgba(16,26,46,0.9)", color: "#cdd9f0", fontSize: 18, cursor: "pointer" };
   const overlayStyle = { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, background: "rgba(5,10,26,0.82)" };
   const restartBtn = { padding: "12px 28px", borderRadius: 10, border: "1px solid #3a4a6a", background: "#101a2e", color: "#cdd9f0", fontSize: 16, fontWeight: "bold", letterSpacing: 1, cursor: "pointer" };
@@ -928,12 +1040,14 @@ function InvadersGame() {
   return <div
     ref={containerRef}
     tabIndex={0}
-    onPointerDown={() => containerRef.current?.focus()}
+    onPointerDown={() => { containerRef.current?.focus(); startRun(); }}
     style={{ position: "relative", width: "100vw", height: "100vh", background: "#050a1a", touchAction: "none", overflow: "hidden", fontFamily: FONT, outline: "none" }}
   >
       <canvas ref={canvasRef} width={dims.W} height={dims.H} style={{ display: "block", width: "100%", height: "100%" }} />
 
+      {/* stopPropagation: pre-muting on the title screen must not also start the run */}
       <button
+        onPointerDown={e => e.stopPropagation()}
         onClick={toggleMute}
         style={muteBtn}
         aria-pressed={muted}

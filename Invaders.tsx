@@ -978,7 +978,7 @@ export default function InvadersGame(){
       canvas.removeEventListener("touchend",onTouchEnd);
       canvas.removeEventListener("touchcancel", onTouchEnd);
     };
-  },[dims, toggleMute]);
+  },[dims, toggleMute, startRun]);
 
   const navBtn: CSSProperties = { pointerEvents:"auto", width:46, height:46, borderRadius:10, border:"1px solid #3a4a6a", background:"rgba(16,26,46,0.9)", color:"#cdd9f0", fontSize:18, cursor:"pointer" };
   const overlayStyle: CSSProperties = { position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20, background:"rgba(5,10,26,0.82)" };
