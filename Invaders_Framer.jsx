@@ -25,7 +25,7 @@ const SCORE_DIGITS = String(MAX_SCORE).length;
 // Swap this one string to retitle; "\n" splits lines and the block auto-fits.
 // VOID INVADERS was rejected too: existing Steam shoot-em-up of the same name.
 const TITLE = "LAST\nINTERCEPTOR";
-const TITLE_FILL = "#d97757";   // Claude coral
+const TITLE_FILL = "#db6d24";   // the player jet's orange
 const TITLE_EDGE = "#ff6b35";   // brighter offset edge, terminal-poster look
 
 // Blocky 5x7 uppercase font — drawn as separated cells so the letterforms read
@@ -66,13 +66,13 @@ function titleCells(line) {
 }
 // Two passes: an offset copy for the edge, then the fill on top. Where they
 // overlap the fill wins, leaving the thin bottom-right edge.
-function drawPixelText(ctx, line, cx, top, cell) {
+function drawPixelText(ctx, line, cx, top, cell, fill = TITLE_FILL, edgeCol = TITLE_EDGE) {
   const gap = Math.max(1, Math.floor(cell*0.14));      // the grid line between cells
   const off = Math.max(2, Math.round(cell*0.34));      // edge offset
   const x0 = Math.round(cx - (titleCells(line)*cell)/2);
-  for(const edge of [true, false]){
-    ctx.fillStyle = edge ? TITLE_EDGE : TITLE_FILL;
-    const d = edge ? off : 0;
+  for(const isEdge of [true, false]){
+    ctx.fillStyle = isEdge ? edgeCol : fill;
+    const d = isEdge ? off : 0;
     let cur = x0;
     for(const ch of line.toUpperCase()){
       const g = FONT5X7[ch] ?? FONT5X7[" "];
@@ -121,6 +121,66 @@ function drawTitleScreen(ctx, W, H, sc, t, stars, mobile) {
 // ── Sound — tiny Web Audio synth, no assets. The muted flag lives inside the
 // closure so the game loop can fire-and-forget without touching React state. ──
 const MUTE_BTN = 30;   // speaker button size (CSS px at sc=1); the score HUD shifts right past it
+// ── Game over screen ──────────────────────────────────────────────────────
+const OVER_FILL = "#ff2e4d";      // danger red, distinct from the coral title
+const OVER_EDGE = "#7a1626";
+const GAMEOVER_SECS = 15;         // auto-restart countdown
+
+// Centered "LABEL  value" row: dim label, bright value, so the eye lands on
+// the number. Returns the y below the row so callers can stack.
+function drawStatRow(ctx, label, value, cx, y, sc) {
+  const lpx = Math.round(11*sc), vpx = Math.round(17*sc);
+  ctx.textBaseline="top"; ctx.textAlign="left";
+  ctx.font=`bold ${lpx}px ${FONT}`;
+  const lw = ctx.measureText(label).width;
+  ctx.font=`bold ${vpx}px ${FONT}`;
+  const vw = ctx.measureText(value).width;
+  const gap = 10*sc, x0 = cx - (lw + gap + vw)/2;
+  ctx.font=`bold ${lpx}px ${FONT}`;   ctx.fillStyle="#5a6b88";
+  ctx.fillText(label, x0, y + (vpx-lpx)*0.65);          // baseline-align to the value
+  ctx.font=`bold ${vpx}px ${FONT}`;   ctx.fillStyle="#9fb4d6";
+  ctx.fillText(value, x0 + lw + gap, y);
+  return y + vpx;
+}
+
+function drawGameOver(ctx, W, H, sc, t, stars, mobile, score, wave, secsLeft) {
+  ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
+  stars.forEach(st=>{ ctx.globalAlpha=st.b*0.5; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
+  ctx.globalAlpha=1;
+
+  const lines = ["GAME","OVER"];
+  const wide = Math.max(...lines.map(titleCells));
+  const LINE_GAP = 2;
+  const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
+  const cell = Math.max(2, Math.min((W*0.62)/wide, (H*0.30)/tallCells));
+  const blockH = tallCells*cell;
+  const blockTop = H*(mobile ? 0.24 : 0.22);
+  let top = blockTop;
+  for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell, OVER_FILL, OVER_EDGE); top += (GLYPH_H+LINE_GAP)*cell; }
+
+  // Run result
+  let y = blockTop + blockH + (mobile ? 32 : 46);
+  y = drawStatRow(ctx, "SCORE",   String(score).padStart(SCORE_DIGITS,"0"), W/2, y, sc);
+  y = drawStatRow(ctx, "REACHED", wave > 3 ? "FINAL BOSS" : `WAVE ${wave}`, W/2, y + 8*sc, sc);
+
+  // Retry prompt — same terminal treatment as the entry screen
+  const msg = mobile ? "TAP TO RETRY" : "PRESS ENTER TO RETRY";
+  const fpx = Math.round(13*sc);
+  ctx.textBaseline="top"; ctx.textAlign="left";
+  ctx.font=`bold ${fpx}px ${FONT}`;
+  const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
+  const py = y + (mobile ? 32 : 44);
+  const px = W/2 - (tw + 5*sc + cw)/2;
+  ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, py);
+  if(Math.floor(t/28)%2===0){ ctx.fillStyle=TITLE_FILL; ctx.fillRect(px + tw + 5*sc, py, cw, fpx); }
+
+  // Countdown to the automatic restart
+  const cpx = Math.round(11*sc);
+  ctx.font=`bold ${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
+  ctx.fillText(`RESTARTING IN ${secsLeft}`, W/2, py + fpx + 14*sc);
+  ctx.textBaseline="alphabetic";
+}
+
 function makeSfx() {
   let ctx = null;
   let muted = false;
@@ -132,11 +192,12 @@ function makeSfx() {
     if (ctx.state === "suspended") void ctx.resume();
     return ctx;
   };
-  const blip = (f0, f1, dur, type, vol) => {
+  // `at` offsets the note from now, so multi-note cues schedule in one call.
+  const blip = (f0, f1, dur, type, vol, at = 0) => {
     if (muted) return;
     const ac = ensure();
     if (!ac || ac.state !== "running") return;   // before the first user gesture: stay silent
-    const t0 = ac.currentTime;
+    const t0 = ac.currentTime + at;
     const osc = ac.createOscillator(), g = ac.createGain();
     osc.type = type;
     osc.frequency.setValueAtTime(f0, t0);
@@ -151,6 +212,10 @@ function makeSfx() {
     setMuted(m) { muted = m; },
     shoot() { blip(880, 320, 0.07, "square", 0.05); },        // player: bright descending pew
     enemyShoot() { blip(240, 90, 0.12, "sawtooth", 0.06); },  // enemy/boss: low buzzy zap
+    // Victory: rising C-E-G-C arpeggio, last note held.
+    win() { [523,659,784,1047].forEach((f,i,a)=> blip(f, f, i===a.length-1 ? 0.36 : 0.13, "square", 0.055, i*0.11)); },
+    // Defeat: two detuned voices sliding to the floor — a power-down.
+    lose() { blip(320, 55, 0.85, "sawtooth", 0.07); blip(240, 45, 0.95, "square", 0.035, 0.04); },
     dispose() { void ctx?.close(); ctx = null; },
   };
 }
@@ -602,7 +667,8 @@ function initGame(W, H, mobile, speed = SPEED, startLives = MAX_LIVES) {
     introT: 180,
     particles: [],
     stars: Array.from({ length: 80 }, () => ({ x: rand(0, W), y: rand(0, H), size: rand(1, 2.5), b: rand(0.3, 1) })),
-    waveMsg: 0
+    waveMsg: 0,
+    overStart: 0
   };
 }
 function Invaders(props) {
@@ -652,11 +718,11 @@ function Invaders(props) {
   // Leave the title screen. Bound to Enter/Space and to a tap anywhere.
   const startRun = useCallback(() => {
     const s = stateRef.current;
-    if (!s || s.phase !== "title") return;
-    s.phase = "waves"; s.introT = 180;
-    setPhase("waves");
+    if (!s) return;
     sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
-  }, []);
+    if (s.phase === "title") { s.phase = "waves"; s.introT = 180; setPhase("waves"); }
+    else if (s.phase === "dead") restart();
+  }, [restart]);
   const restart = useCallback(() => {
     measureInit();
   }, [measureInit]);
@@ -731,8 +797,21 @@ function Invaders(props) {
         animRef.current = requestAnimationFrame(loop); return;
       }
 
-      if (s.phase === "dead" || s.phase === "won") {
-        setPhase(s.phase);
+      if (s.phase === "dead") {
+        setPhase("dead");
+        // overStart doubles as a once-guard, so the cue can't retrigger every frame.
+        // Wall-clock, not frame count: the countdown is user-visible, so it must
+        // read 15s on a 120Hz display too.
+        if (s.overStart === 0) { s.overStart = performance.now(); sfxRef.current.lose(); }
+        const elapsed = (performance.now() - s.overStart) / 1000;
+        drawGameOver(ctx, W, H, sc, s.t, s.stars, mobile, s.score, s.wave, Math.max(0, Math.ceil(GAMEOVER_SECS - elapsed)));
+        if (elapsed >= GAMEOVER_SECS) restart();
+        animRef.current = requestAnimationFrame(loop);
+        return;
+      }
+      if (s.phase === "won") {
+        setPhase("won");
+        if (s.overStart === 0) { s.overStart = performance.now(); sfxRef.current.win(); }
         animRef.current = requestAnimationFrame(loop);
         return;
       }
@@ -1035,7 +1114,7 @@ function Invaders(props) {
       canvas.removeEventListener("touchend", onTouchEnd);
       canvas.removeEventListener("touchcancel", onTouchEnd);
     };
-  }, [dims, toggleMute, startRun]);
+  }, [dims, toggleMute, startRun, restart]);
   const navBtn = { pointerEvents: "auto", width: 46, height: 46, borderRadius: 10, border: "1px solid #3a4a6a", background: "rgba(16,26,46,0.9)", color: "#cdd9f0", fontSize: 18, cursor: "pointer" };
   const overlayStyle = { position: "absolute", inset: 0, display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", gap: 20, background: "rgba(5,10,26,0.82)" };
   const restartBtn = { padding: "12px 28px", borderRadius: 10, border: "1px solid #3a4a6a", background: "#101a2e", color: "#cdd9f0", fontSize: 16, fontWeight: "bold", letterSpacing: 1, cursor: "pointer" };
@@ -1072,7 +1151,8 @@ function Invaders(props) {
         </svg>
       </button>
 
-      {(phase === "dead" || phase === "won") && <div style={overlayStyle}>
+      {/* "dead" is drawn on the canvas now; the win screen still uses this overlay. */}
+      {phase === "won" && <div style={overlayStyle}>
           <div style={{ color: phase === "won" ? "#a23cdb" : "#ff2e4d", fontSize: Math.round(30), fontWeight: "bold", letterSpacing: 2 }}>
             {phase === "won" ? "BOSS DESTROYED" : "GAME OVER"}
           </div>
