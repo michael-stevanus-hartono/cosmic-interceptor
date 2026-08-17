@@ -23,7 +23,7 @@ const SCORE_DIGITS = String(MAX_SCORE).length;
 // the entertainment-services class), so the game ships under its own name.
 // Swap this one string to retitle; "\n" splits lines and the block auto-fits.
 // VOID INVADERS was rejected too: existing Steam shoot-em-up of the same name.
-const TITLE = "LAST\nINTERCEPTOR";
+const TITLE = "COSMIC\nINTERCEPTOR";
 const TITLE_FILL = "#db6d24";   // the player jet's orange
 const TITLE_EDGE = "#ff6b35";   // brighter offset edge, terminal-poster look
 

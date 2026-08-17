@@ -71,9 +71,9 @@ function muteBox(sc: number): { size: number; left: number; top: number } {
 // the entertainment-services class), so the game ships under its own name.
 // Swap this one string to retitle; "\n" splits lines and the block auto-fits.
 // VOID INVADERS was rejected too: existing Steam shoot-em-up of the same name.
-const TITLE = "LAST\nINTERCEPTOR";
+const TITLE = "COSMIC\nINTERCEPTOR";
 const TITLE_FILL = "#db6d24";   // the player jet's orange
-const TITLE_EDGE = "#ff6b35";   // brighter offset edge, terminal-poster look
+const TITLE_EDGE = "#db6d24";   // same orange — the offset copy is outline-only
 
 // Blocky 5x7 uppercase font — drawn as separated cells so the letterforms read
 // as a grid of blocks rather than solid strokes.
@@ -112,23 +112,45 @@ function titleCells(line: string): number {
   return line.length * GLYPH_W + Math.max(0, line.length - 1);
 }
 // Two passes: an offset copy for the edge, then the fill on top. Where they
-// overlap the fill wins, leaving the thin bottom-right edge.
+// two layers, as in the Claude Code wordmark: an offset copy drawn as a HOLLOW
+// silhouette outline (unfilled, so the background reads through it), then the
+// solid glyph on top. Only the down-right sliver of the outline stays visible.
 function drawPixelText(ctx: CanvasRenderingContext2D, line: string, cx: number, top: number, cell: number, fill: string = TITLE_FILL, edgeCol: string = TITLE_EDGE): void {
   const gap = Math.max(1, Math.floor(cell*0.14));      // the grid line between cells
-  const off = Math.max(2, Math.round(cell*0.34));      // edge offset
+  const off = Math.max(2, Math.round(cell*0.34));      // offset of the outline copy
+  const lw  = Math.max(1, Math.round(cell*0.11));      // outline stroke weight
   const x0 = Math.round(cx - (titleCells(line)*cell)/2);
-  for(const isEdge of [true, false]){
-    ctx.fillStyle = isEdge ? edgeCol : fill;
-    const d = isEdge ? off : 0;
-    let cur = x0;
-    for(const ch of line.toUpperCase()){
-      const g = FONT5X7[ch] ?? FONT5X7[" "];
-      for(let r=0;r<GLYPH_H;r++) for(let c=0;c<GLYPH_W;c++){
-        if(g[r*GLYPH_W+c] !== "1") continue;
-        ctx.fillRect(cur + c*cell + d, top + r*cell + d, cell-gap, cell-gap);
-      }
-      cur += (GLYPH_W+1)*cell;
+  const chars = [...line.toUpperCase()];
+  const lit = (g: string, r: number, c: number): boolean =>
+    r>=0 && r<GLYPH_H && c>=0 && c<GLYPH_W && g[r*GLYPH_W+c]==="1";
+
+  // Pass 1 — outline only. Each lit cell contributes just the edges that face a
+  // dark neighbour, so adjacent cells fuse into one contour around the glyph.
+  ctx.fillStyle = edgeCol;
+  let cur = x0;
+  for(const ch of chars){
+    const g = FONT5X7[ch] ?? FONT5X7[" "];
+    for(let r=0;r<GLYPH_H;r++) for(let c=0;c<GLYPH_W;c++){
+      if(!lit(g,r,c)) continue;
+      const x = cur + c*cell + off, y = top + r*cell + off;
+      if(!lit(g,r-1,c)) ctx.fillRect(x, y, cell, lw);
+      if(!lit(g,r+1,c)) ctx.fillRect(x, y+cell-lw, cell, lw);
+      if(!lit(g,r,c-1)) ctx.fillRect(x, y, lw, cell);
+      if(!lit(g,r,c+1)) ctx.fillRect(x+cell-lw, y, lw, cell);
     }
+    cur += (GLYPH_W+1)*cell;
+  }
+
+  // Pass 2 — the solid glyph, cells inset by `gap` so the block grid reads.
+  ctx.fillStyle = fill;
+  cur = x0;
+  for(const ch of chars){
+    const g = FONT5X7[ch] ?? FONT5X7[" "];
+    for(let r=0;r<GLYPH_H;r++) for(let c=0;c<GLYPH_W;c++){
+      if(!lit(g,r,c)) continue;
+      ctx.fillRect(cur + c*cell, top + r*cell, cell-gap, cell-gap);
+    }
+    cur += (GLYPH_W+1)*cell;
   }
 }
 
@@ -165,10 +187,22 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   ctx.textAlign="center"; ctx.textBaseline="alphabetic";
 }
 
-// ── Game over screen ──────────────────────────────────────────────────────
-const OVER_FILL = "#ff2e4d";      // danger red, distinct from the coral title
+// ── Result screens (defeat / victory) ─────────────────────────────────────
+// Both share one renderer so the two endings stay visually identical apart
+// from wordmark, palette, and stats.
+const OVER_FILL = "#ff2e4d";      // danger red, distinct from the jet-orange title
 const OVER_EDGE = "#7a1626";
-const GAMEOVER_SECS = 15;         // auto-restart countdown
+const WIN_FILL  = "#e8b53a";      // victory gold, picked up from the boss's trim
+const WIN_EDGE  = "#7a5410";
+const GAMEOVER_SECS = 15;         // auto-restart countdown, both endings
+
+interface ResultOpts {
+  lines: string[];                 // wordmark, one entry per line
+  fill: string; edge: string;
+  stats: Array<[string, string]>;  // [label, value] rows
+  action: string;                  // completes "PRESS ENTER TO ..." / "TAP TO ..."
+  secsLeft: number;
+}
 
 // Centered "LABEL  value" row: dim label, bright value, so the eye lands on
 // the number. Returns the y below the row so callers can stack.
@@ -187,28 +221,26 @@ function drawStatRow(ctx: CanvasRenderingContext2D, label: string, value: string
   return y + vpx;
 }
 
-function drawGameOver(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean, score: number, wave: number, secsLeft: number): void {
+function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean, o: ResultOpts): void {
   ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
   stars.forEach(st=>{ ctx.globalAlpha=st.b*0.5; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
   ctx.globalAlpha=1;
 
-  const lines = ["GAME","OVER"];
-  const wide = Math.max(...lines.map(titleCells));
+  const wide = Math.max(...o.lines.map(titleCells));
   const LINE_GAP = 2;
-  const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
+  const tallCells = o.lines.length*GLYPH_H + (o.lines.length-1)*LINE_GAP;
   const cell = Math.max(2, Math.min((W*0.62)/wide, (H*0.30)/tallCells));
   const blockH = tallCells*cell;
   const blockTop = H*(mobile ? 0.24 : 0.22);
   let top = blockTop;
-  for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell, OVER_FILL, OVER_EDGE); top += (GLYPH_H+LINE_GAP)*cell; }
+  for(const ln of o.lines){ drawPixelText(ctx, ln, W/2, top, cell, o.fill, o.edge); top += (GLYPH_H+LINE_GAP)*cell; }
 
   // Run result
   let y = blockTop + blockH + (mobile ? 32 : 46);
-  y = drawStatRow(ctx, "SCORE",   String(score).padStart(SCORE_DIGITS,"0"), W/2, y, sc);
-  y = drawStatRow(ctx, "REACHED", wave > 3 ? "FINAL BOSS" : `WAVE ${wave}`, W/2, y + 8*sc, sc);
+  o.stats.forEach(([label, value], i)=>{ y = drawStatRow(ctx, label, value, W/2, i===0 ? y : y + 8*sc, sc); });
 
-  // Retry prompt — same terminal treatment as the entry screen
-  const msg = mobile ? "TAP TO RETRY" : "PRESS ENTER TO RETRY";
+  // Prompt — same terminal treatment as the entry screen
+  const msg = (mobile ? "TAP TO " : "PRESS ENTER TO ") + o.action;
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
@@ -221,7 +253,7 @@ function drawGameOver(ctx: CanvasRenderingContext2D, W: number, H: number, sc: n
   // Countdown to the automatic restart
   const cpx = Math.round(11*sc);
   ctx.font=`bold ${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
-  ctx.fillText(`RESTARTING IN ${secsLeft}`, W/2, py + fpx + 14*sc);
+  ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, py + fpx + 14*sc);
   ctx.textBaseline="alphabetic";
 }
 
@@ -688,7 +720,6 @@ export default function InvadersGame(){
   const animRef = useRef<number>(0);
   const keysRef = useRef<Record<string, boolean>>({});
   const touchState = useRef<{ active: boolean; x: number | null }>({ active: false, x: null });
-  const [phase, setPhase] = useState<Phase>("title");
   const [dims, setDims] = useState<Dims>(getDims());
   const [previewWave, setPreviewWave] = useState<number>(1); // 1,2,3 = waves, 4 = boss
   const sfxRef = useRef<Sfx>(makeSfx());
@@ -710,7 +741,6 @@ export default function InvadersGame(){
     const s = initGame(W,H,mobile);
     s.phase = "waves";                     // PLAY AGAIN drops straight into a run
     stateRef.current = s;
-    setPhase("waves");
   },[dims]);
 
   // Primary "advance" input — Enter/Space, or a tap anywhere. Starts the run
@@ -719,14 +749,14 @@ export default function InvadersGame(){
     const s = stateRef.current;
     if(!s) return;
     sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
-    if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; setPhase("waves"); }
-    else if(s.phase === "dead") restart();
+    if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; }
+    else if(s.phase === "dead" || s.phase === "won") restart();
   },[restart]);
 
   useEffect(()=>{
     const onResize = (): void => {
       const d=getDims(); setDims(d);
-      stateRef.current=initGame(d.W,d.H,d.mobile); setPhase("waves");
+      stateRef.current=initGame(d.W,d.H,d.mobile);
     };
     window.addEventListener("resize",onResize);
     return ()=>window.removeEventListener("resize",onResize);
@@ -743,12 +773,10 @@ export default function InvadersGame(){
       s.wave = previewWave;
       s.enemies = makeWave(previewWave, W, H, s.sc, mobile);
       s.enemyDir = 1;
-      setPhase("waves");
     } else {
       s.phase = "boss";
       s.enemies = [];
       s.mothership.hp = s.mothership.maxHp;
-      setPhase("boss");
     }
   },[previewWave, dims]);
 
@@ -816,20 +844,23 @@ export default function InvadersGame(){
         animRef.current=requestAnimationFrame(loop); return;
       }
 
-      if(s.phase==="dead"){
-        setPhase("dead");
+      // Both endings share one screen and one countdown; only the wordmark,
+      // palette and stat rows differ.
+      if(s.phase==="dead" || s.phase==="won"){
+        const won = s.phase==="won";
         // Wall-clock, not frame count: the countdown is user-visible, so it must
         // read 15s on a 120Hz display too.
         // overStart doubles as a once-guard, so the cue can't retrigger every frame.
-        if(s.overStart===0){ s.overStart = performance.now(); sfxRef.current.lose(); }
+        if(s.overStart===0){ s.overStart = performance.now(); if(won) sfxRef.current.win(); else sfxRef.current.lose(); }
         const elapsed = (performance.now() - s.overStart)/1000;
-        drawGameOver(ctx, W, H, sc, s.t, s.stars, mobile, s.score, s.wave, Math.max(0, Math.ceil(GAMEOVER_SECS - elapsed)));
+        const secsLeft = Math.max(0, Math.ceil(GAMEOVER_SECS - elapsed));
+        const scoreStr = String(s.score).padStart(SCORE_DIGITS,"0");
+        drawResultScreen(ctx, W, H, sc, s.t, s.stars, mobile, won
+          ? { lines:["MISSION","COMPLETE"], fill:WIN_FILL, edge:WIN_EDGE, action:"PLAY AGAIN", secsLeft,
+              stats:[["SCORE", scoreStr], ["LIVES LEFT", String(Math.max(0, s.lives))]] }
+          : { lines:["GAME","OVER"], fill:OVER_FILL, edge:OVER_EDGE, action:"RETRY", secsLeft,
+              stats:[["SCORE", scoreStr], ["REACHED", s.wave > 3 ? "FINAL BOSS" : `WAVE ${s.wave}`]] });
         if(elapsed >= GAMEOVER_SECS) restart();
-        animRef.current=requestAnimationFrame(loop); return;
-      }
-      if(s.phase==="won"){
-        setPhase("won");
-        if(s.overStart===0){ s.overStart = performance.now(); sfxRef.current.win(); }
         animRef.current=requestAnimationFrame(loop); return;
       }
 
@@ -907,7 +938,7 @@ export default function InvadersGame(){
         });
         if(s.enemies.every(e=>!e.alive)){
           s.wave++;
-          if(s.wave>3){ s.phase="boss"; setPhase("boss"); s.enemyBullets=[]; s.introT=120; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; }
+          if(s.wave>3){ s.phase="boss"; s.enemyBullets=[]; s.introT=120; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; }
           else{ s.enemies=makeWave(s.wave,W,H,sc,mobile); s.enemyDir=1; s.waveMsg=90; s.introT=90; }
         }
       }
@@ -1023,10 +1054,15 @@ export default function InvadersGame(){
       ctx.fillText("SCORE:", scoreX, 8*sc);
       ctx.fillStyle="#9fb4d6"; ctx.font=`bold ${Math.round(16*sc)}px ${FONT}`;
       ctx.fillText(String(s.score).padStart(SCORE_DIGITS,"0"), scoreX, 20*sc);
-      // Wave — top-center
+      // Wave — top-center, with a blinking GET READY tucked underneath during
+      // the intro. Replaces the old full-screen banner, which covered the field.
       ctx.textAlign="center";
       ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
       ctx.fillText(s.phase==="boss"?"BOSS":`WAVE ${s.wave}`, W/2, 8*sc);
+      if(s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
+        ctx.fillStyle=TITLE_FILL; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillText("GET READY", W/2, 22*sc);
+      }
       // Lives — label + red pixel hearts (top-right)
       ctx.textAlign="right";
       ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
@@ -1042,14 +1078,6 @@ export default function InvadersGame(){
       }
       ctx.textBaseline="alphabetic";
 
-      // intro / wave banner (skipped while paused — the preview switcher takes over)
-      if(s.introT>0 && !VISUAL_PAUSE){
-        ctx.textBaseline="alphabetic"; ctx.textAlign="center";
-        ctx.fillStyle="#e6ecff"; ctx.font=`bold ${Math.round(28*sc)}px ${FONT}`;
-        ctx.fillText(s.phase==="boss"?"FINAL BOSS":`WAVE ${s.wave}`, W/2, H*0.4);
-        ctx.fillStyle="#8aa0c8"; ctx.font=`bold ${Math.round(14*sc)}px ${FONT}`;
-        ctx.fillText("GET READY", W/2, H*0.4+26*sc);
-      }
       ctx.textBaseline="alphabetic";
 
       animRef.current=requestAnimationFrame(loop);
@@ -1070,8 +1098,6 @@ export default function InvadersGame(){
   },[dims, toggleMute, startRun, restart]);
 
   const navBtn: CSSProperties = { pointerEvents:"auto", width:46, height:46, borderRadius:10, border:"1px solid #3a4a6a", background:"rgba(16,26,46,0.9)", color:"#cdd9f0", fontSize:18, cursor:"pointer" };
-  const overlayStyle: CSSProperties = { position:"absolute", inset:0, display:"flex", flexDirection:"column", alignItems:"center", justifyContent:"center", gap:20, background:"rgba(5,10,26,0.82)" };
-  const restartBtn: CSSProperties = { padding:"12px 28px", borderRadius:10, border:"1px solid #3a4a6a", background:"#101a2e", color:"#cdd9f0", fontSize:16, fontWeight:"bold", letterSpacing:1, cursor:"pointer" };
 
   const mbox = muteBox(scaleFor(dims.W, dims.H, dims.mobile));
   const muteBtn: CSSProperties = {
@@ -1110,15 +1136,7 @@ export default function InvadersGame(){
         </div>
       )}
 
-      {/* "dead" is drawn on the canvas now; the win screen still uses this overlay. */}
-      {phase==="won" && (
-        <div style={overlayStyle}>
-          <div style={{color:"#a23cdb", fontSize:Math.round(30), fontWeight:"bold", letterSpacing:2}}>
-            BOSS DESTROYED
-          </div>
-          <button onClick={restart} style={restartBtn}>PLAY AGAIN</button>
-        </div>
-      )}
+      {/* Both endings are drawn on the canvas now — no DOM overlay. */}
     </div>
   );
 }
