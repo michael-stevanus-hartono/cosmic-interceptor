@@ -17,6 +17,7 @@ interface Star { x: number; y: number; size: number; b: number; }
 
 interface GameState {
   t: number; sc: number; mobile: boolean;
+  W: number; H: number;      // the box this state was laid out for; rescale() uses it
   player: Player;
   bullets: Bullet[]; enemyBullets: EnemyBullet[];
   enemies: Enemy[];
@@ -33,13 +34,16 @@ interface GameState {
 // Set to false to resume normal play. true = freeze gameplay + show wave/boss preview switcher.
 const VISUAL_PAUSE = false;   // set true to use the wave/boss preview switcher
 
-function isMobile(): boolean {
-  return window.innerWidth < 600 || ('ontouchstart' in window && window.innerWidth < window.innerHeight);
+// Classify from the measured box, not from `window`: the game may be embedded
+// in an iframe far smaller than the window it lives in.
+function dimsFor(W: number, H: number): Dims {
+  const mobile = W < 600 || ('ontouchstart' in window && W < H);
+  return { W, H, mobile };
 }
 
-function getDims(): Dims {
-  // Fill the whole viewport on every device.
-  return { W: window.innerWidth, H: window.innerHeight, mobile: isMobile() };
+// Only used for the very first paint, before the container has been measured.
+function initialDims(): Dims {
+  return dimsFor(window.innerWidth || 0, window.innerHeight || 0);
 }
 
 function rand(a: number, b: number): number { return Math.random()*(b-a)+a; }
@@ -698,7 +702,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
   const sc = scaleFor(W, H, mobile);
   const playerY = mobile ? H * 0.78 : H * 0.88;
   return {
-    t:0, sc, mobile,
+    t:0, sc, mobile, W, H,
     player:{ x:W/2, y:playerY, w:28*sc, h:28*sc, vx:0, hitT:0 },
     bullets:[], enemyBullets:[],
     enemies:makeWave(1,W,H,sc,mobile),
@@ -713,6 +717,37 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
   };
 }
 
+// Re-fit a live run to a new box. Positions move proportionally and sizes
+// follow the new scale, so a phone's URL bar collapsing (or a window resize,
+// or a rotation) no longer throws the player back to the title screen.
+function rescale(s: GameState, W: number, H: number, mobile: boolean): void {
+  if(s.W === W && s.H === H && s.mobile === mobile) return;   // nothing moved
+  const rx = s.W > 0 ? W/s.W : 1, ry = s.H > 0 ? H/s.H : 1;
+  const sc = scaleFor(W, H, mobile);
+  s.sc = sc; s.mobile = mobile; s.W = W; s.H = H;
+
+  const p = s.player;
+  p.x = Math.max(14*sc, Math.min(W-14*sc, p.x*rx));
+  p.w = 28*sc; p.h = 28*sc;
+
+  s.enemies.forEach(e=>{ e.x*=rx; e.y*=ry; e.w=28*sc; e.h=20*sc; if(e.homeX!=null) e.homeX*=rx; });
+  s.bullets.forEach(b=>{ b.x*=rx; b.y*=ry; b.w=4*sc; b.h=14*sc; });
+  s.enemyBullets.forEach(b=>{
+    b.x*=rx; b.y*=ry;
+    if(b.vx!=null) b.vx*=rx; if(b.vy!=null) b.vy*=ry; if(b.r!=null) b.r*=rx;
+  });
+  s.particles.forEach(pt=>{ pt.x*=rx; pt.y*=ry; });
+
+  const m = s.mothership;
+  m.x = Math.max(0, Math.min(W, m.x*rx));
+  m.y = 150*sc;
+  m.w = BOSS_COLS*BOSS_PX(sc); m.h = BOSS_ROWS*BOSS_PX(sc);
+  m.vx = (m.vx < 0 ? -1 : 1) * 1.5*sc*SPEED;
+
+  // Stars are decorative and uniformly random, so respreading beats stretching.
+  s.stars = Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)}));
+}
+
 export default function InvadersGame(){
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const containerRef = useRef<HTMLDivElement | null>(null);
@@ -720,7 +755,7 @@ export default function InvadersGame(){
   const animRef = useRef<number>(0);
   const keysRef = useRef<Record<string, boolean>>({});
   const touchState = useRef<{ active: boolean; x: number | null }>({ active: false, x: null });
-  const [dims, setDims] = useState<Dims>(getDims());
+  const [dims, setDims] = useState<Dims>(initialDims);
   const [previewWave, setPreviewWave] = useState<number>(1); // 1,2,3 = waves, 4 = boss
   const sfxRef = useRef<Sfx>(makeSfx());
   const [muted, setMuted] = useState<boolean>(false);
@@ -754,12 +789,32 @@ export default function InvadersGame(){
   },[restart]);
 
   useEffect(()=>{
-    const onResize = (): void => {
-      const d=getDims(); setDims(d);
-      stateRef.current=initGame(d.W,d.H,d.mobile);
+    // Measure the container, not the window. A window `resize` listener never
+    // fires when an iframe is laid out after mount, which left the canvas stuck
+    // at 0x0 with no way to recover. ResizeObserver catches that first layout.
+    const el = containerRef.current;
+    if(!el) return;
+    const apply = (): void => {
+      const r = el.getBoundingClientRect();
+      const W = Math.round(r.width), H = Math.round(r.height);
+      if(W === 0 || H === 0) return;                  // not laid out yet; wait
+      // Return the SAME object when nothing changed so React bails out — an
+      // always-new object re-ran the whole game effect on every spurious resize.
+      setDims(prev => (prev.W===W && prev.H===H) ? prev : dimsFor(W,H));
     };
-    window.addEventListener("resize",onResize);
-    return ()=>window.removeEventListener("resize",onResize);
+    apply();
+    // Belt and braces: ResizeObserver covers container/iframe layout, the window
+    // listener covers plain viewport changes. Both funnel through the same
+    // deduped apply(), so whichever fires first wins and the other is a no-op.
+    let ro: ResizeObserver | null = null;
+    if(typeof ResizeObserver !== "undefined"){ ro = new ResizeObserver(apply); ro.observe(el); }
+    window.addEventListener("resize", apply);
+    window.addEventListener("orientationchange", apply);
+    return ()=>{
+      ro?.disconnect();
+      window.removeEventListener("resize", apply);
+      window.removeEventListener("orientationchange", apply);
+    };
   },[]);
 
   // Visual-pause preview: rebuild the formation when switching waves/boss
@@ -782,7 +837,10 @@ export default function InvadersGame(){
 
   useEffect(()=>{
     const {W,H,mobile}=dims;
-    stateRef.current=initGame(W,H,mobile);
+    // Build the run once; later size changes re-fit it rather than restarting.
+    const existing = stateRef.current;
+    if(existing) rescale(existing, W, H, mobile);
+    else stateRef.current = initGame(W,H,mobile);
     const canvas = canvasRef.current;
     if (!canvas) return;
     const onKey = (e: KeyboardEvent): void => {
