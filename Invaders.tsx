@@ -606,7 +606,6 @@ function drawBossThrusters(ctx: CanvasRenderingContext2D, x: number, y: number, 
 
 function drawMothership(ctx: CanvasRenderingContext2D, x: number, y: number, hp: number, maxHp: number, t: number, sc: number, charge: number): void {
   const bp = BOSS_PX(sc);
-  const bw = BOSS_COLS*bp, bh = BOSS_ROWS*bp;
   const shk = hp<maxHp*0.3 ? Math.sin(t*0.3)*3 : 0;
 
   // Purple core glow behind the sprite (centered on the cockpit core)
@@ -636,15 +635,31 @@ function drawMothership(ctx: CanvasRenderingContext2D, x: number, y: number, hp:
     ctx.restore();
   }
 
-  // HP bar + label
-  ctx.save(); ctx.translate(x,y);
-  const barW=Math.min(bw*0.9, 220*sc), barTop=-bh/2-16*sc, barH=9*sc;
-  ctx.fillStyle="#23232c"; ctx.fillRect(-barW/2,barTop,barW,barH);
+}
+
+// Boss HP — pinned to the top-centre HUD strip rather than floating above the
+// sprite. Anchored to the sprite it sat at `-bh/2 - 16*sc`, which with the boss
+// at y=150*sc pushed it hard against the screen edge and straight through the
+// HUD's wave label. Screen-pinned it can neither clip nor collide, and it stops
+// jittering as the boss drifts.
+function drawBossBar(ctx: CanvasRenderingContext2D, W: number, hp: number, maxHp: number, sc: number): void {
+  const barW = Math.min(200*sc, W*0.5), barH = 9*sc;
+  const x0 = W/2 - barW/2, barTop = 22*sc;
+  ctx.save();
+  ctx.textAlign="center"; ctx.textBaseline="top";
+  ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
+  // The boss sits high enough that its upward thrusters reach this strip, so
+  // the group gets a dark backing to stay legible over whatever is behind it.
+  const padX = 10*sc, padY = 5*sc;
+  const panelW = Math.max(barW, ctx.measureText("FINAL BOSS").width) + padX*2;
+  ctx.fillStyle = "rgba(5,10,26,0.72)";
+  ctx.fillRect(W/2 - panelW/2, 8*sc - padY, panelW, (barTop + barH) - 8*sc + padY*2);
+  ctx.fillStyle="#caa24a";
+  ctx.fillText("FINAL BOSS", W/2, 8*sc);
+  ctx.fillStyle="#23232c"; ctx.fillRect(x0, barTop, barW, barH);
   ctx.fillStyle = hp>maxHp*0.5?"#a23cdb":hp>maxHp*0.25?"#e0a020":"#ff2e4d";
-  ctx.fillRect(-barW/2,barTop,barW*(hp/maxHp),barH);
-  ctx.strokeStyle="rgba(255,255,255,0.7)"; ctx.lineWidth=1; ctx.strokeRect(-barW/2,barTop,barW,barH);
-  ctx.fillStyle="#caa24a"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`; ctx.textAlign="center";
-  ctx.fillText("FINAL BOSS", 0, barTop-6*sc);
+  ctx.fillRect(x0, barTop, barW*Math.max(0, hp/maxHp), barH);
+  ctx.strokeStyle="rgba(255,255,255,0.7)"; ctx.lineWidth=1; ctx.strokeRect(x0, barTop, barW, barH);
   ctx.restore();
 }
 
@@ -1118,8 +1133,15 @@ export default function InvadersGame(){
       // Wave — top-center, with a blinking GET READY tucked underneath during
       // the intro. Replaces the old full-screen banner, which covered the field.
       ctx.textAlign="center";
-      ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
-      ctx.fillText(s.phase==="boss"?"BOSS":`WAVE ${s.wave}`, W/2, 8*sc);
+      if(s.phase==="boss"){
+        // The bar's own "FINAL BOSS" caption names the phase, so a wave label
+        // here would just be a second thing in the same 20px of screen.
+        // Held back during the intro so it doesn't overlap the GET READY blink.
+        if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc);
+      } else {
+        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
+        ctx.fillText(`WAVE ${s.wave}`, W/2, 8*sc);
+      }
       if(s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
         ctx.fillStyle=TITLE_FILL; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("GET READY", W/2, 22*sc);
