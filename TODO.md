@@ -75,10 +75,9 @@ pinned bottom.
 
 ## [ ] 3. Carried over from earlier
 
-- [ ] **README** — draft written (`README.md`, uncommitted). Needs a screenshot
-      picked from the review gallery, and a licence decision (no `LICENSE` file yet).
-- [ ] Consider a mid-fight action shot for the README rather than a spawn-position
-      formation.
+- [x] **README** — committed (`README.md`), MIT `LICENSE` added.
+- [ ] README still needs a screenshot dropped into the placeholder — a mid-fight
+      action shot or the boss OVERDRIVE beam, rather than a spawn-position formation.
 
 ---
 
