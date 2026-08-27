@@ -277,51 +277,157 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   // YES / NO with a caret marking the selection, rather than boxing both.
   const optPx = Math.round(17*sc);
   const oy = py + fpx + 14*sc;
-  ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
-  const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
-  const caretW = 9*sc, caretGap = 7*sc, optGap = 38*sc;
+  const caretW = 9*sc, caretGap = 7*sc;
   const slot = caretW + caretGap;
-  const totalW = slot + yesW + optGap + slot + noW;
-  const x0 = W/2 - totalW/2;
-  const yesX = x0 + slot;
-  const noCaretX = yesX + yesW + optGap;
-  const noX = noCaretX + slot;
 
-  const caret = (cx: number): void => {
-    ctx.beginPath();
-    ctx.moveTo(cx, oy + optPx*0.14);
-    ctx.lineTo(cx + caretW, oy + optPx*0.50);
-    ctx.lineTo(cx, oy + optPx*0.86);
-    ctx.closePath(); ctx.fill();
-  };
-  ctx.fillStyle = o.fill; caret(o.sel === 0 ? x0 : noCaretX);
-  ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
-  ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
+  let yesBox: Rect, noBox: Rect, afterOptionsY: number;
+
+  if(mobile){
+    // Stacked, not side-by-side: a thumb reaches a vertical list more reliably
+    // than a wide horizontal pair, and stacking is what actually earns the
+    // full 48px minimum tap height on both axes rather than squeezing it out
+    // of the row to fit two options side by side.
+    ctx.font=`bold ${optPx}px ${FONT}`; ctx.textBaseline="middle"; ctx.textAlign="left";
+    const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
+    const groupW = slot + Math.max(yesW, noW);
+    const gx0 = W/2 - groupW/2, labelX = gx0 + slot;
+
+    const ROW_H = 48, ROW_GAP = 10, pitch = ROW_H + ROW_GAP;
+    const rowW = Math.min(260*sc, W*0.78);
+    const rowX = W/2 - rowW/2;
+    const yesCY = oy + ROW_H/2, noCY = yesCY + pitch;
+
+    const caret = (cx: number, cy: number): void => {
+      ctx.beginPath();
+      ctx.moveTo(cx, cy - caretW*0.6);
+      ctx.lineTo(cx + caretW, cy);
+      ctx.lineTo(cx, cy + caretW*0.6);
+      ctx.closePath(); ctx.fill();
+    };
+    ctx.fillStyle = o.fill; caret(gx0, o.sel === 0 ? yesCY : noCY);
+    ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", labelX, yesCY);
+    ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  labelX, noCY);
+
+    yesBox = { x: rowX, y: yesCY - ROW_H/2, w: rowW, h: ROW_H };
+    noBox  = { x: rowX, y: noCY  - ROW_H/2, w: rowW, h: ROW_H };
+    afterOptionsY = noCY + ROW_H/2;
+  } else {
+    ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
+    const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
+    const optGap = 38*sc;
+    const totalW = slot + yesW + optGap + slot + noW;
+    const x0 = W/2 - totalW/2;
+    const yesX = x0 + slot;
+    const noCaretX = yesX + yesW + optGap;
+    const noX = noCaretX + slot;
+
+    const caret = (cx: number): void => {
+      ctx.beginPath();
+      ctx.moveTo(cx, oy + optPx*0.14);
+      ctx.lineTo(cx + caretW, oy + optPx*0.50);
+      ctx.lineTo(cx, oy + optPx*0.86);
+      ctx.closePath(); ctx.fill();
+    };
+    ctx.fillStyle = o.fill; caret(o.sel === 0 ? x0 : noCaretX);
+    ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
+    ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
+
+    // Generous touch targets even on desktop: the caret slot plus padding
+    // around each label (still mouse-driven there, so 48px isn't required).
+    const padY = 14*sc;
+    yesBox = { x: x0 - 6*sc,       y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 };
+    noBox  = { x: noCaretX - 6*sc, y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 };
+    afterOptionsY = oy + optPx;
+  }
 
   // Countdown to the automatic restart — unchanged behaviour, just moved below.
   const cpx = Math.round(11*sc);
   ctx.font=`bold ${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
-  ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, oy + optPx + 16*sc);
+  ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, afterOptionsY + 16*sc);
   ctx.textBaseline="alphabetic";
 
-  // Generous touch targets: the caret slot plus padding around each label.
-  const padY = 14*sc;
-  return {
-    yes: { x: x0 - 6*sc,        y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 },
-    no:  { x: noCaretX - 6*sc,  y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 },
-  };
+  return { yes: yesBox, no: noBox };
 }
 
-interface Sfx { unlock(): void; setMuted(m: boolean): void; shoot(): void; enemyShoot(): void; win(): void; lose(): void; dispose(): void; }
+interface Sfx { unlock(): void; setMuted(m: boolean): void; setBgmWanted(w: boolean): void; shoot(): void; enemyShoot(): void; win(): void; lose(): void; dispose(): void; }
 function makeSfx(): Sfx {
   let ctx: AudioContext | null = null;
   let muted = false;
+
+  // ── Title-screen BGM ──────────────────────────────────────────────────
+  // A short arpeggiated loop over Am-F-C-G, synthesized the same way as the
+  // SFX cues — no audio file, so the game stays a single portable component.
+  // Scheduled with the standard Web-Audio lookahead pattern (queue ~200ms of
+  // notes, re-check every 100ms) rather than one setTimeout per note, so
+  // playback stays sample-accurate regardless of setTimeout jitter.
+  const BGM_BPM = 112;
+  const BGM_STEP = 60/BGM_BPM/2;                    // eighth notes
+  const BGM_CHORDS: number[][] = [
+    [220.00, 261.63, 329.63],   // Am
+    [174.61, 220.00, 261.63],   // F
+    [261.63, 329.63, 392.00],   // C
+    [196.00, 246.94, 293.66],   // G
+  ];
+  const BGM_ARP = [0,1,2,3,2,1,0,1];                // step -> chord-tone index; 3 = root one octave up
+  let bgmWanted = false;   // what the game currently wants (tracks the title phase)
+  let bgmOn = false;       // whether the scheduler is actually running
+  let bgmTimer: ReturnType<typeof setTimeout> | null = null;
+  let bgmStep = 0;
+  let bgmNextTime = 0;
+
+  const bgmNote = (freq: number, t0: number, dur: number, vol: number, type: OscillatorType): void => {
+    if(!ctx) return;
+    const osc = ctx.createOscillator(), g = ctx.createGain();
+    osc.type = type;
+    osc.frequency.setValueAtTime(freq, t0);
+    g.gain.setValueAtTime(0, t0);
+    g.gain.linearRampToValueAtTime(vol, t0 + 0.02);         // soft attack — no click
+    g.gain.exponentialRampToValueAtTime(0.0008, t0 + dur);
+    osc.connect(g); g.connect(ctx.destination);
+    osc.start(t0); osc.stop(t0 + dur + 0.05);
+  };
+  const bgmScheduleAhead = (): void => {
+    if(!ctx || !bgmOn) return;
+    const lookahead = 0.2;
+    // The clock always advances, muted or not — otherwise a long mute would
+    // leave bgmNextTime far behind ctx.currentTime, and unmuting would dump
+    // every skipped note out at once instead of just resuming in place.
+    while(bgmNextTime < ctx.currentTime + lookahead){
+      if(!muted){
+        const chord = BGM_CHORDS[Math.floor(bgmStep/8) % BGM_CHORDS.length];
+        const idx = BGM_ARP[bgmStep % 8];
+        bgmNote(idx===3 ? chord[0]*2 : chord[idx], bgmNextTime, BGM_STEP*0.9, 0.045, "triangle");
+        if(bgmStep % 8 === 0){
+          // one sustained bass note per bar, an octave below the chord root
+          bgmNote(chord[0]/2, bgmNextTime, BGM_STEP*8*0.95, 0.03, "sine");
+        }
+      }
+      bgmNextTime += BGM_STEP;
+      bgmStep++;
+    }
+  };
+  const bgmTick = (): void => {
+    bgmScheduleAhead();
+    if(bgmOn) bgmTimer = setTimeout(bgmTick, 100);
+  };
+  // Reconciles "what the game wants" against "what the audio subsystem can
+  // currently do" — called on every unlock() and every setBgmWanted(), since
+  // the context typically isn't running yet the first time either fires.
+  function syncBgm(): void {
+    if(bgmWanted && ctx && ctx.state === "running"){
+      if(!bgmOn){ bgmOn = true; bgmStep = 0; bgmNextTime = ctx.currentTime + 0.05; bgmTick(); }
+    } else if(bgmOn){
+      bgmOn = false;
+      if(bgmTimer !== null){ clearTimeout(bgmTimer); bgmTimer = null; }
+    }
+  }
+
   const ensure = (): AudioContext | null => {
     if(typeof window === "undefined") return null;
     const AC = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
     if(!AC) return null;
     if(!ctx) ctx = new AC();
-    if(ctx.state === "suspended") void ctx.resume();
+    if(ctx.state === "suspended") void ctx.resume().then(syncBgm);   // resume() is async
     return ctx;
   };
   // `at` offsets the note from now, so multi-note cues schedule in one call.
@@ -340,15 +446,20 @@ function makeSfx(): Sfx {
     osc.start(t0); osc.stop(t0 + dur);
   };
   return {
-    unlock(){ void ensure(); },                          // call from inside a user gesture
+    unlock(){ void ensure(); syncBgm(); },                // call from inside a user gesture
     setMuted(m){ muted = m; },
+    setBgmWanted(w){ bgmWanted = w; syncBgm(); },
     shoot(){ blip(880, 320, 0.07, "square", 0.05); },        // player: bright descending pew
     enemyShoot(){ blip(240, 90, 0.12, "sawtooth", 0.06); },  // enemy/boss: low buzzy zap
     // Victory: rising C-E-G-C arpeggio, last note held.
     win(){ [523,659,784,1047].forEach((f,i,a)=> blip(f, f, i===a.length-1 ? 0.36 : 0.13, "square", 0.055, i*0.11)); },
     // Defeat: two detuned voices sliding to the floor — a power-down.
     lose(){ blip(320, 55, 0.85, "sawtooth", 0.07); blip(240, 45, 0.95, "square", 0.035, 0.04); },
-    dispose(){ void ctx?.close(); ctx = null; },
+    dispose(){
+      bgmOn = false;
+      if(bgmTimer !== null){ clearTimeout(bgmTimer); bgmTimer = null; }
+      void ctx?.close(); ctx = null;
+    },
   };
 }
 const HEART: number[][] = [
@@ -950,11 +1061,15 @@ export default function InvadersGame(){
       if(e.type === "keydown"){
         sfxRef.current.unlock();          // audio needs a user gesture once
         if(e.code === "KeyM") toggleMute();
-        // On an end screen the arrows move the YES/NO selection instead of the ship.
+        // On an end screen the arrows move the YES/NO selection instead of the
+        // ship. Both axes select — desktop lays the options out left/right,
+        // mobile stacks them top/bottom, and either input device might be
+        // present on either layout (a phone with a keyboard, a narrow desktop
+        // window), so all four arrows just mean "previous / next option".
         const st = stateRef.current;
         if(st && (st.phase === "dead" || st.phase === "won")){
-          if(e.code === "ArrowLeft"  || e.code === "KeyA") st.endSel = 0;
-          if(e.code === "ArrowRight" || e.code === "KeyD") st.endSel = 1;
+          if(e.code === "ArrowLeft"  || e.code === "KeyA" || e.code === "ArrowUp")   st.endSel = 0;
+          if(e.code === "ArrowRight" || e.code === "KeyD" || e.code === "ArrowDown") st.endSel = 1;
         }
         if(e.code === "Enter" || e.code === "Space") startRun();
       }
@@ -1018,6 +1133,7 @@ export default function InvadersGame(){
       const keys = keysRef.current;
       const {sc,mobile}=s;
       s.t++;
+      sfxRef.current.setBgmWanted(s.phase==="title");   // BGM plays on the entry screen only
 
       // Title screen: no ship, no waves, no HUD — just the wordmark over the starfield.
       if(s.phase==="title"){
@@ -1312,9 +1428,20 @@ export default function InvadersGame(){
   };
 
   return (
-    <div ref={containerRef} tabIndex={0} onPointerDown={handlePointerDown}
-      style={{position:"relative", width:"100vw", height:"100vh", background:"#050a1a", touchAction:"none", overflow:"hidden", fontFamily:FONT, outline:"none"}}>
-      <canvas ref={canvasRef} width={dims.W} height={dims.H} style={{display:"block", width:"100%", height:"100%"}} />
+    <>
+      {/* 100vh is the LARGEST possible viewport — as if the browser's address/
+         nav bars were hidden — so on a phone with the bars showing (the common
+         case on first load) it measures taller than what's actually visible,
+         and bottom-anchored content like the entry prompt ends up drawn
+         underneath the chrome. 100dvh tracks the real visible height instead;
+         listed second so it's the one browsers that support it use, while the
+         100vh above it still serves as the fallback for the few that don't.
+         (Two same-property declarations can't both live in one React style
+         object, hence the dedicated rule here.) */}
+      <style>{`.ci-viewport{width:100vw;width:100dvw;height:100vh;height:100dvh}`}</style>
+      <div ref={containerRef} tabIndex={0} onPointerDown={handlePointerDown} className="ci-viewport"
+        style={{position:"relative", background:"#050a1a", touchAction:"none", overflow:"hidden", fontFamily:FONT, outline:"none"}}>
+        <canvas ref={canvasRef} width={dims.W} height={dims.H} style={{display:"block", width:"100%", height:"100%"}} />
 
       {/* stopPropagation: pre-muting on the title screen must not also start the run */}
       <button onClick={toggleMute} style={muteBtn} aria-pressed={muted}
@@ -1341,6 +1468,7 @@ export default function InvadersGame(){
       )}
 
       {/* Both endings are drawn on the canvas now — no DOM overlay. */}
-    </div>
+      </div>
+    </>
   );
 }
