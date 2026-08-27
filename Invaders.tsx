@@ -185,22 +185,26 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   let top = H*(mobile?0.10:0.09);
   for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
 
-  // Idle ship at the vertical centre. moving=false, but the thruster still
-  // animates so the screen isn't static even before a run starts.
+  // Ship + prompt are anchored to the BOTTOM edge as a pair, not centred, so
+  // the layout reads title-top / empty-middle / controls-bottom. Measured up
+  // from the bottom: prompt first, then the ship 48px above it.
   const shipSc = sc * (mobile ? 1.35 : 1.6);
-  const shipY = H*0.52;
-  drawJet(ctx, W/2, shipY, shipSc, t, false);
-
-  // Prompt — fixed 48px below the ship's sprite footprint (not the flame,
-  // which flickers in length and would make the gap visibly jitter).
   const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*shipSc) / 2;
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const y = shipY + shipHalfH + 48;
+  const y = H - (mobile ? 64 : 76) - fpx;          // prompt text top
   const px = W/2 - (tw + 5*sc + cw)/2;
+
+  // Idle ship 48px above the prompt. moving=false, but the thruster still
+  // animates so the screen isn't static before a run starts. The gap is
+  // measured to the sprite's footprint, not the flame — the flame's length
+  // flickers frame to frame and would make the spacing visibly jitter.
+  const shipY = y - 48 - shipHalfH;
+  drawJet(ctx, W/2, shipY, shipSc, t, false);
+
   ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, y);
   if(Math.floor(t/28)%2===0){
     ctx.fillStyle=TITLE_FILL;
