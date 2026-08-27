@@ -244,7 +244,7 @@ function drawStatRow(ctx: CanvasRenderingContext2D, label: string, value: string
   const gap = 10*sc, x0 = cx - (lw + gap + vw)/2;
   ctx.font=`bold ${lpx}px ${FONT}`;   ctx.fillStyle="#5a6b88";
   ctx.fillText(label, x0, y + (vpx-lpx)*0.65);          // baseline-align to the value
-  ctx.font=`bold ${vpx}px ${FONT}`;   ctx.fillStyle="#9fb4d6";
+  ctx.font=`bold ${vpx}px ${FONT}`;   ctx.fillStyle="#ffffff";
   ctx.fillText(value, x0 + lw + gap, y);
   return y + vpx;
 }
@@ -272,7 +272,7 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   ctx.textBaseline="top"; ctx.textAlign="center";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const py = y + (mobile ? 30 : 42);
-  ctx.fillStyle="#8aa0c8"; ctx.fillText("PLAY AGAIN?", W/2, py);
+  ctx.fillStyle="#ffffff"; ctx.fillText("PLAY AGAIN?", W/2, py);
 
   // YES / NO with a caret marking the selection, rather than boxing both.
   const optPx = Math.round(17*sc);
@@ -305,38 +305,43 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
       ctx.closePath(); ctx.fill();
     };
     ctx.fillStyle = o.fill; caret(gx0, o.sel === 0 ? yesCY : noCY);
-    ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", labelX, yesCY);
-    ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  labelX, noCY);
+    ctx.fillStyle = o.sel === 0 ? "#ffffff" : "#5a6b88"; ctx.fillText("YES", labelX, yesCY);
+    ctx.fillStyle = o.sel === 1 ? "#ffffff" : "#5a6b88"; ctx.fillText("NO",  labelX, noCY);
 
     yesBox = { x: rowX, y: yesCY - ROW_H/2, w: rowW, h: ROW_H };
     noBox  = { x: rowX, y: noCY  - ROW_H/2, w: rowW, h: ROW_H };
     afterOptionsY = noCY + ROW_H/2;
   } else {
+    // Centre the YES/NO *words* themselves, not the caret's reserved slot —
+    // the caret is a decoration that hangs off the left of whichever word is
+    // selected, so it can't be part of the centering math or the pair reads
+    // as off-centre (only one caret is ever inked, so a slot reserved on
+    // both sides leaves asymmetric dead space).
     ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
     const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
-    const optGap = 38*sc;
-    const totalW = slot + yesW + optGap + slot + noW;
+    const optGap = 48*sc;
+    const totalW = yesW + optGap + noW;
     const x0 = W/2 - totalW/2;
-    const yesX = x0 + slot;
-    const noCaretX = yesX + yesW + optGap;
-    const noX = noCaretX + slot;
+    const yesX = x0;
+    const noX = x0 + yesW + optGap;
 
-    const caret = (cx: number): void => {
+    const caret = (labelX: number): void => {
+      const cx = labelX - slot;
       ctx.beginPath();
       ctx.moveTo(cx, oy + optPx*0.14);
       ctx.lineTo(cx + caretW, oy + optPx*0.50);
       ctx.lineTo(cx, oy + optPx*0.86);
       ctx.closePath(); ctx.fill();
     };
-    ctx.fillStyle = o.fill; caret(o.sel === 0 ? x0 : noCaretX);
-    ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
-    ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
+    ctx.fillStyle = o.fill; caret(o.sel === 0 ? yesX : noX);
+    ctx.fillStyle = o.sel === 0 ? "#ffffff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
+    ctx.fillStyle = o.sel === 1 ? "#ffffff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
 
     // Generous touch targets even on desktop: the caret slot plus padding
     // around each label (still mouse-driven there, so 48px isn't required).
     const padY = 14*sc;
-    yesBox = { x: x0 - 6*sc,       y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 };
-    noBox  = { x: noCaretX - 6*sc, y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 };
+    yesBox = { x: yesX - slot - 6*sc, y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 };
+    noBox  = { x: noX  - slot - 6*sc, y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 };
     afterOptionsY = oy + optPx;
   }
 
