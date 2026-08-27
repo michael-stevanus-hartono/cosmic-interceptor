@@ -29,6 +29,7 @@ interface GameState {
   stars: Star[];
   waveMsg: number;
   overStart: number;   // ms timestamp the run ended; 0 until then
+  endSel: number;      // end-screen selection: 0 = YES (default), 1 = NO
 }
 
 // Set to false to resume normal play. true = freeze gameplay + show wave/boss preview switcher.
@@ -160,28 +161,45 @@ function drawPixelText(ctx: CanvasRenderingContext2D, line: string, cx: number, 
 
 function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean): void {
   ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
-  stars.forEach(st=>{ ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
+
+  // Scrolling starfield, wrapped so it loops forever — gives the impression
+  // the (idle, stationary) ship is flying forward. Nearer-looking (bigger)
+  // stars drift faster for a cheap parallax read. Speed is driven by `t`,
+  // which only advances once per fixed 60Hz simulation tick (see step()) —
+  // never by wall-clock or raw rAF frames — so this can't silently double
+  // speed on a 120Hz display the way the pre-fix game loop once did.
+  stars.forEach(st=>{
+    const speed = sc * (0.35 + st.size*0.35);
+    const y = ((st.y + t*speed) % H + H) % H;
+    ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x, y, st.size, st.size);
+  });
   ctx.globalAlpha=1;
 
+  // Wordmark — shrunk and pinned near the top, leaving the middle for the ship
+  // and the bottom for the prompt instead of the old single centred stack.
   const lines = TITLE.split("\n");
   const wide = Math.max(...lines.map(titleCells));
   const LINE_GAP = 2;                                   // cells between lines
   const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
-  const cell = Math.max(2, Math.min((W*0.78)/wide, (H*0.42)/tallCells));
-  const blockH = tallCells*cell;
-  const blockTop = H*0.40 - blockH/2;
-  let top = blockTop;
+  const cell = Math.max(2, Math.min((W*(mobile?0.74:0.52))/wide, (H*0.24)/tallCells));
+  let top = H*(mobile?0.10:0.09);
   for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
 
-  // Terminal-style prompt with a blinking block cursor. On mobile it sits a
-  // fixed 32px below the wordmark — the proportional gap read far too wide on
-  // a tall phone viewport. Desktop keeps its lower, roomier placement.
+  // Idle ship at the vertical centre. moving=false, but the thruster still
+  // animates so the screen isn't static even before a run starts.
+  const shipSc = sc * (mobile ? 1.35 : 1.6);
+  const shipY = H*0.52;
+  drawJet(ctx, W/2, shipY, shipSc, t, false);
+
+  // Prompt — fixed 48px below the ship's sprite footprint (not the flame,
+  // which flickers in length and would make the gap visibly jitter).
+  const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*shipSc) / 2;
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const y = mobile ? blockTop + blockH + 32 : H*0.74 - fpx;
+  const y = shipY + shipHalfH + 48;
   const px = W/2 - (tw + 5*sc + cw)/2;
   ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, y);
   if(Math.floor(t/28)%2===0){
@@ -204,9 +222,11 @@ interface ResultOpts {
   lines: string[];                 // wordmark, one entry per line
   fill: string; edge: string;
   stats: Array<[string, string]>;  // [label, value] rows
-  action: string;                  // completes "PRESS ENTER TO ..." / "TAP TO ..."
+  sel: number;                     // 0 = YES, 1 = NO
   secsLeft: number;
 }
+// Where the YES/NO options landed, so touches can be hit-tested against them.
+type EndButtons = { yes: Rect; no: Rect };
 
 // Centered "LABEL  value" row: dim label, bright value, so the eye lands on
 // the number. Returns the y below the row so callers can stack.
@@ -225,7 +245,7 @@ function drawStatRow(ctx: CanvasRenderingContext2D, label: string, value: string
   return y + vpx;
 }
 
-function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean, o: ResultOpts): void {
+function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, _t: number, stars: Star[], mobile: boolean, o: ResultOpts): EndButtons {
   ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
   stars.forEach(st=>{ ctx.globalAlpha=st.b*0.5; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
   ctx.globalAlpha=1;
@@ -243,22 +263,49 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   let y = blockTop + blockH + (mobile ? 32 : 46);
   o.stats.forEach(([label, value], i)=>{ y = drawStatRow(ctx, label, value, W/2, i===0 ? y : y + 8*sc, sc); });
 
-  // Prompt — same terminal treatment as the entry screen
-  const msg = (mobile ? "TAP TO " : "PRESS ENTER TO ") + o.action;
+  // "PLAY AGAIN?" prompt
   const fpx = Math.round(13*sc);
-  ctx.textBaseline="top"; ctx.textAlign="left";
+  ctx.textBaseline="top"; ctx.textAlign="center";
   ctx.font=`bold ${fpx}px ${FONT}`;
-  const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const py = y + (mobile ? 32 : 44);
-  const px = W/2 - (tw + 5*sc + cw)/2;
-  ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, py);
-  if(Math.floor(t/28)%2===0){ ctx.fillStyle=TITLE_FILL; ctx.fillRect(px + tw + 5*sc, py, cw, fpx); }
+  const py = y + (mobile ? 30 : 42);
+  ctx.fillStyle="#8aa0c8"; ctx.fillText("PLAY AGAIN?", W/2, py);
 
-  // Countdown to the automatic restart
+  // YES / NO with a caret marking the selection, rather than boxing both.
+  const optPx = Math.round(17*sc);
+  const oy = py + fpx + 14*sc;
+  ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
+  const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
+  const caretW = 9*sc, caretGap = 7*sc, optGap = 38*sc;
+  const slot = caretW + caretGap;
+  const totalW = slot + yesW + optGap + slot + noW;
+  const x0 = W/2 - totalW/2;
+  const yesX = x0 + slot;
+  const noCaretX = yesX + yesW + optGap;
+  const noX = noCaretX + slot;
+
+  const caret = (cx: number): void => {
+    ctx.beginPath();
+    ctx.moveTo(cx, oy + optPx*0.14);
+    ctx.lineTo(cx + caretW, oy + optPx*0.50);
+    ctx.lineTo(cx, oy + optPx*0.86);
+    ctx.closePath(); ctx.fill();
+  };
+  ctx.fillStyle = o.fill; caret(o.sel === 0 ? x0 : noCaretX);
+  ctx.fillStyle = o.sel === 0 ? "#e6ecff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
+  ctx.fillStyle = o.sel === 1 ? "#e6ecff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
+
+  // Countdown to the automatic restart — unchanged behaviour, just moved below.
   const cpx = Math.round(11*sc);
   ctx.font=`bold ${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
-  ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, py + fpx + 14*sc);
+  ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, oy + optPx + 16*sc);
   ctx.textBaseline="alphabetic";
+
+  // Generous touch targets: the caret slot plus padding around each label.
+  const padY = 14*sc;
+  return {
+    yes: { x: x0 - 6*sc,        y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 },
+    no:  { x: noCaretX - 6*sc,  y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 },
+  };
 }
 
 interface Sfx { unlock(): void; setMuted(m: boolean): void; shoot(): void; enemyShoot(): void; win(): void; lose(): void; dispose(): void; }
@@ -728,7 +775,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     particles:[],
     stars:Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)})),
     waveMsg:0,
-    overStart:0,
+    overStart:0, endSel:0,
   };
 }
 
@@ -770,6 +817,7 @@ export default function InvadersGame(){
   const animRef = useRef<number>(0);
   const keysRef = useRef<Record<string, boolean>>({});
   const touchState = useRef<{ active: boolean; x: number | null }>({ active: false, x: null });
+  const endBtnsRef = useRef<EndButtons | null>(null);   // YES/NO hit areas, set while drawing
   const [dims, setDims] = useState<Dims>(initialDims);
   const [previewWave, setPreviewWave] = useState<number>(1); // 1,2,3 = waves, 4 = boss
   const sfxRef = useRef<Sfx>(makeSfx());
@@ -793,15 +841,49 @@ export default function InvadersGame(){
     stateRef.current = s;
   },[dims]);
 
-  // Primary "advance" input — Enter/Space, or a tap anywhere. Starts the run
-  // from the title screen and retries from the game-over screen.
+  // Abandon the run and go back to the title screen (the end screen's NO).
+  const toTitle = useCallback((): void => {
+    const {W,H,mobile}=dims;
+    stateRef.current = initGame(W,H,mobile);   // initGame already opens on "title"
+  },[dims]);
+
+  // Commit the end-screen choice: YES replays, NO returns to the title.
+  const confirmEnd = useCallback((): void => {
+    const s = stateRef.current;
+    if(!s) return;
+    if(s.endSel === 0) restart(); else toTitle();
+  },[restart, toTitle]);
+
+
+  // Primary "advance" input — Enter/Space, or a tap. Starts the run from the
+  // title screen; on an end screen it confirms whichever option is selected.
   const startRun = useCallback((): void => {
     const s = stateRef.current;
     if(!s) return;
     sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
     if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; }
-    else if(s.phase === "dead" || s.phase === "won") restart();
-  },[restart]);
+    else if(s.phase === "dead" || s.phase === "won") confirmEnd();
+  },[confirmEnd]);
+
+  // Mouse clicks on the container. Touch is deliberately ignored here because
+  // the canvas's touchstart handler owns it — pointerdown fires first, and
+  // letting both act would run the choice twice.
+  const handlePointerDown = useCallback((e: { clientX: number; clientY: number; pointerType?: string }): void => {
+    containerRef.current?.focus();
+    if(e.pointerType === "touch") return;
+    const s = stateRef.current, canvas = canvasRef.current;
+    if(s && canvas && (s.phase === "dead" || s.phase === "won")){
+      const rect = canvas.getBoundingClientRect();
+      const x = (e.clientX - rect.left) * (canvas.width/rect.width);
+      const y = (e.clientY - rect.top) * (canvas.height/rect.height);
+      const b = endBtnsRef.current;
+      const inside = (r: Rect): boolean => x>=r.x && x<=r.x+r.w && y>=r.y && y<=r.y+r.h;
+      if(b && inside(b.yes)){ s.endSel = 0; startRun(); }
+      else if(b && inside(b.no)){ s.endSel = 1; startRun(); }
+      return;                                // a click off the options does nothing
+    }
+    startRun();
+  },[startRun]);
 
   useEffect(()=>{
     // Measure the container, not the window. A window `resize` listener never
@@ -864,6 +946,12 @@ export default function InvadersGame(){
       if(e.type === "keydown"){
         sfxRef.current.unlock();          // audio needs a user gesture once
         if(e.code === "KeyM") toggleMute();
+        // On an end screen the arrows move the YES/NO selection instead of the ship.
+        const st = stateRef.current;
+        if(st && (st.phase === "dead" || st.phase === "won")){
+          if(e.code === "ArrowLeft"  || e.code === "KeyA") st.endSel = 0;
+          if(e.code === "ArrowRight" || e.code === "KeyD") st.endSel = 1;
+        }
         if(e.code === "Enter" || e.code === "Space") startRun();
       }
     };
@@ -881,9 +969,22 @@ export default function InvadersGame(){
 
     const onTouchStart = (e: TouchEvent): void => {
       e.preventDefault();
-      startRun();
       const rect=canvas.getBoundingClientRect();
-      touchState.current={ active:true, x:(e.touches[0].clientX - rect.left)*(canvas.width/rect.width) };
+      const scaleX = canvas.width/rect.width, scaleY = canvas.height/rect.height;
+      const tx = (e.touches[0].clientX - rect.left)*scaleX;
+      const ty = (e.touches[0].clientY - rect.top)*scaleY;
+      const st = stateRef.current;
+      if(st && (st.phase === "dead" || st.phase === "won")){
+        // On an end screen a tap only counts when it lands on YES or NO, so a
+        // stray tap can't restart the run out from under you.
+        const b = endBtnsRef.current;
+        const inside = (r: Rect): boolean => tx>=r.x && tx<=r.x+r.w && ty>=r.y && ty<=r.y+r.h;
+        if(b && inside(b.yes)){ st.endSel = 0; startRun(); }
+        else if(b && inside(b.no)){ st.endSel = 1; startRun(); }
+        return;
+      }
+      startRun();
+      touchState.current={ active:true, x:tx };
     };
     const onTouchMove = (e: TouchEvent): void => {
       e.preventDefault();
@@ -927,15 +1028,16 @@ export default function InvadersGame(){
         // Wall-clock, not frame count: the countdown is user-visible, so it must
         // read 15s on a 120Hz display too.
         // overStart doubles as a once-guard, so the cue can't retrigger every frame.
-        if(s.overStart===0){ s.overStart = performance.now(); if(won) sfxRef.current.win(); else sfxRef.current.lose(); }
+        if(s.overStart===0){ s.overStart = performance.now(); s.endSel = 0; if(won) sfxRef.current.win(); else sfxRef.current.lose(); }
         const elapsed = (performance.now() - s.overStart)/1000;
         const secsLeft = Math.max(0, Math.ceil(GAMEOVER_SECS - elapsed));
         const scoreStr = String(s.score).padStart(SCORE_DIGITS,"0");
-        drawResultScreen(ctx, W, H, sc, s.t, s.stars, mobile, won
-          ? { lines:["MISSION","COMPLETE"], fill:WIN_FILL, edge:WIN_EDGE, action:"PLAY AGAIN", secsLeft,
+        endBtnsRef.current = drawResultScreen(ctx, W, H, sc, s.t, s.stars, mobile, won
+          ? { lines:["MISSION","COMPLETE"], fill:WIN_FILL, edge:WIN_EDGE, sel:s.endSel, secsLeft,
               stats:[["SCORE", scoreStr], ["LIVES LEFT", String(Math.max(0, s.lives))]] }
-          : { lines:["GAME","OVER"], fill:OVER_FILL, edge:OVER_EDGE, action:"RETRY", secsLeft,
+          : { lines:["GAME","OVER"], fill:OVER_FILL, edge:OVER_EDGE, sel:s.endSel, secsLeft,
               stats:[["SCORE", scoreStr], ["REACHED", s.wave > 3 ? "FINAL BOSS" : `WAVE ${s.wave}`]] });
+        // Timing out is the same as choosing YES.
         if(elapsed >= GAMEOVER_SECS) restart();
         return;
       }
@@ -1206,7 +1308,7 @@ export default function InvadersGame(){
   };
 
   return (
-    <div ref={containerRef} tabIndex={0} onPointerDown={()=>{ containerRef.current?.focus(); startRun(); }}
+    <div ref={containerRef} tabIndex={0} onPointerDown={handlePointerDown}
       style={{position:"relative", width:"100vw", height:"100vh", background:"#050a1a", touchAction:"none", overflow:"hidden", fontFamily:FONT, outline:"none"}}>
       <canvas ref={canvasRef} width={dims.W} height={dims.H} style={{display:"block", width:"100%", height:"100%"}} />
 
