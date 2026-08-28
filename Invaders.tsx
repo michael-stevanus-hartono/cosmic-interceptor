@@ -71,6 +71,18 @@ function muteBox(sc: number): { size: number; left: number; top: number } {
   const size = Math.round(MUTE_BTN * Math.min(1.6, Math.max(0.85, sc)));
   return { size, left: Math.round(12*sc), top: Math.max(4, Math.round(23*sc - size/2)) };
 }
+// Where the ship rests, vertically — shared by the title screen and gameplay
+// so they can't independently drift apart the way they did twice already
+// (once on mobile, once on desktop). Desktop mirrors the title wordmark's
+// H*0.09 top margin on the bottom edge for a symmetric top/bottom pad;
+// mobile keeps its own hand-tuned bottom margin from the last round.
+function shipRestY(H: number, sc: number, mobile: boolean): number {
+  const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*sc) / 2;
+  const fpx = Math.round(13*sc);
+  const bottomPad = mobile ? 32 : H*0.09;
+  const promptY = H - bottomPad - fpx;      // matches the title screen's prompt-text top
+  return promptY - 48 - shipHalfH;          // ship sits 48px above the prompt
+}
 // ── Title screen ──────────────────────────────────────────────────────────
 // "Space Invaders" is a registered trademark of Taito (USPTO 88984221, live in
 // the entertainment-services class), so the game ships under its own name.
@@ -186,28 +198,26 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
 
   // Ship + prompt are anchored to the BOTTOM edge as a pair, not centred, so
-  // the layout reads title-top / empty-middle / controls-bottom. Measured up
-  // from the bottom: prompt first, then the ship 48px above it.
-  // Same scale as the in-flight ship (not a bumped-up "hero" size) - it used
-  // to run 35-60% bigger here, which read fine alone but visibly changed size
-  // the instant a run started, and matching gameplay scale would have made
-  // the enemies look undersized next to it if this had gone the other way.
-  const shipSc = sc;
-  const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*shipSc) / 2;
+  // the layout reads title-top / empty-middle / controls-bottom. The bottom
+  // padding mirrors the H*0.09 top margin on desktop (see shipRestY) so the
+  // whole composition reads symmetric top-to-bottom, not just bottom-heavy.
+  // Ship scale matches the in-flight ship (not a bumped-up "hero" size) - it
+  // used to run 35-60% bigger here, which read fine alone but visibly
+  // changed size the instant a run started.
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const y = H - (mobile ? 32 : 76) - fpx;          // prompt text top
+  const y = H - (mobile ? 32 : H*0.09) - fpx;      // prompt text top
   const px = W/2 - (tw + 5*sc + cw)/2;
 
-  // Idle ship 48px above the prompt. moving=false, but the thruster still
-  // animates so the screen isn't static before a run starts. The gap is
-  // measured to the sprite's footprint, not the flame — the flame's length
-  // flickers frame to frame and would make the spacing visibly jitter.
-  const shipY = y - 48 - shipHalfH;
-  drawJet(ctx, W/2, shipY, shipSc, t, false);
+  // Idle ship 48px above the prompt (see shipRestY - also what gameplay uses,
+  // so the ship doesn't jump position the instant a run starts). moving=false,
+  // but the thruster still animates so the screen isn't static before a run
+  // starts.
+  const shipY = shipRestY(H, sc, mobile);
+  drawJet(ctx, W/2, shipY, sc, t, false);
 
   ctx.fillStyle="#8aa0c8"; ctx.fillText(msg, px, y);
   if(Math.floor(t/28)%2===0){
@@ -284,70 +294,41 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   const caretW = 9*sc, caretGap = 7*sc;
   const slot = caretW + caretGap;
 
-  let yesBox: Rect, noBox: Rect, afterOptionsY: number;
+  // Centre the YES/NO *words* themselves, not the caret's reserved slot — the
+  // caret is a decoration that hangs off the left of whichever word is
+  // selected, so it can't be part of the centering math or the pair reads as
+  // off-centre (only one caret is ever inked, so a slot reserved on both
+  // sides leaves asymmetric dead space). Same side-by-side layout on mobile
+  // and desktop; only the tap target's height differs below.
+  ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
+  const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
+  const optGap = 48*sc;
+  const totalW = yesW + optGap + noW;
+  const x0 = W/2 - totalW/2;
+  const yesX = x0;
+  const noX = x0 + yesW + optGap;
 
-  if(mobile){
-    // Stacked, not side-by-side: a thumb reaches a vertical list more reliably
-    // than a wide horizontal pair, and stacking is what actually earns the
-    // full 48px minimum tap height on both axes rather than squeezing it out
-    // of the row to fit two options side by side.
-    ctx.font=`bold ${optPx}px ${FONT}`; ctx.textBaseline="middle"; ctx.textAlign="left";
-    const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
-    const groupW = slot + Math.max(yesW, noW);
-    const gx0 = W/2 - groupW/2, labelX = gx0 + slot;
+  const caret = (labelX: number): void => {
+    const cx = labelX - slot;
+    ctx.beginPath();
+    ctx.moveTo(cx, oy + optPx*0.14);
+    ctx.lineTo(cx + caretW, oy + optPx*0.50);
+    ctx.lineTo(cx, oy + optPx*0.86);
+    ctx.closePath(); ctx.fill();
+  };
+  ctx.fillStyle = o.fill; caret(o.sel === 0 ? yesX : noX);
+  ctx.fillStyle = o.sel === 0 ? "#ffffff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
+  ctx.fillStyle = o.sel === 1 ? "#ffffff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
 
-    const ROW_H = 48, ROW_GAP = 10, pitch = ROW_H + ROW_GAP;
-    const rowW = Math.min(260*sc, W*0.78);
-    const rowX = W/2 - rowW/2;
-    const yesCY = oy + ROW_H/2, noCY = yesCY + pitch;
-
-    const caret = (cx: number, cy: number): void => {
-      ctx.beginPath();
-      ctx.moveTo(cx, cy - caretW*0.6);
-      ctx.lineTo(cx + caretW, cy);
-      ctx.lineTo(cx, cy + caretW*0.6);
-      ctx.closePath(); ctx.fill();
-    };
-    ctx.fillStyle = o.fill; caret(gx0, o.sel === 0 ? yesCY : noCY);
-    ctx.fillStyle = o.sel === 0 ? "#ffffff" : "#5a6b88"; ctx.fillText("YES", labelX, yesCY);
-    ctx.fillStyle = o.sel === 1 ? "#ffffff" : "#5a6b88"; ctx.fillText("NO",  labelX, noCY);
-
-    yesBox = { x: rowX, y: yesCY - ROW_H/2, w: rowW, h: ROW_H };
-    noBox  = { x: rowX, y: noCY  - ROW_H/2, w: rowW, h: ROW_H };
-    afterOptionsY = noCY + ROW_H/2;
-  } else {
-    // Centre the YES/NO *words* themselves, not the caret's reserved slot —
-    // the caret is a decoration that hangs off the left of whichever word is
-    // selected, so it can't be part of the centering math or the pair reads
-    // as off-centre (only one caret is ever inked, so a slot reserved on
-    // both sides leaves asymmetric dead space).
-    ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
-    const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
-    const optGap = 48*sc;
-    const totalW = yesW + optGap + noW;
-    const x0 = W/2 - totalW/2;
-    const yesX = x0;
-    const noX = x0 + yesW + optGap;
-
-    const caret = (labelX: number): void => {
-      const cx = labelX - slot;
-      ctx.beginPath();
-      ctx.moveTo(cx, oy + optPx*0.14);
-      ctx.lineTo(cx + caretW, oy + optPx*0.50);
-      ctx.lineTo(cx, oy + optPx*0.86);
-      ctx.closePath(); ctx.fill();
-    };
-    ctx.fillStyle = o.fill; caret(o.sel === 0 ? yesX : noX);
-    ctx.fillStyle = o.sel === 0 ? "#ffffff" : "#5a6b88"; ctx.fillText("YES", yesX, oy);
-    ctx.fillStyle = o.sel === 1 ? "#ffffff" : "#5a6b88"; ctx.fillText("NO",  noX,  oy);
-
-    // Generous touch targets even on desktop: the caret slot plus padding
-    // around each label (still mouse-driven there, so 48px isn't required).
-    const padY = 14*sc;
-    yesBox = { x: yesX - slot - 6*sc, y: oy - padY, w: slot + yesW + 12*sc, h: optPx + padY*2 };
-    noBox  = { x: noX  - slot - 6*sc, y: oy - padY, w: slot + noW  + 12*sc, h: optPx + padY*2 };
-    afterOptionsY = oy + optPx;
-  }
+  // Hit box hugs the caret+label rather than stretching into a wide bar.
+  // Mobile forces the 48px accessibility floor on height; desktop just pads
+  // generously since it's mouse-driven and doesn't need that floor.
+  const padX = 10*sc, padY = 14*sc;
+  const boxH = mobile ? 48 : optPx + padY*2;
+  const boxY = oy + optPx/2 - boxH/2;
+  const yesBox: Rect = { x: yesX - slot - padX, y: boxY, w: slot + yesW + padX*2, h: boxH };
+  const noBox: Rect  = { x: noX  - slot - padX, y: boxY, w: slot + noW  + padX*2, h: boxH };
+  const afterOptionsY = boxY + boxH;
 
   // Countdown to the automatic restart — unchanged behaviour, just moved below.
   const cpx = Math.round(11*sc);
@@ -886,7 +867,7 @@ function makeWave(wave: number, W: number, H: number, sc: number, mobile: boolea
 
 function initGame(W: number, H: number, mobile: boolean): GameState {
   const sc = scaleFor(W, H, mobile);
-  const playerY = mobile ? H * 0.93 : H * 0.88;
+  const playerY = mobile ? H * 0.93 : shipRestY(H, sc, mobile);
   return {
     t:0, sc, mobile, W, H,
     player:{ x:W/2, y:playerY, w:28*sc, h:28*sc, vx:0, hitT:0 },
@@ -1142,7 +1123,14 @@ export default function InvadersGame(){
       const keys = keysRef.current;
       const {sc,mobile}=s;
       s.t++;
-      sfxRef.current.setBgmWanted(s.phase==="title");   // BGM plays on the entry screen only
+      // BGM plays on the entry screen, and through the "GET READY" intro beat.
+      // The intro extends the window on purpose: unlock() and this phase flip
+      // both fire inside the same tap, but AudioContext.resume() is async, so
+      // gating strictly to "title" raced the very next frame's bgmWanted=false
+      // against resume() finishing - on a fast resume the music never audibly
+      // started. Riding through the 3s intro gives resume() many frames to
+      // land instead of one, and doubles as a calm-before-the-fight beat.
+      sfxRef.current.setBgmWanted(s.phase==="title" || (s.phase==="waves" && s.introT>0));
 
       // Title screen: no ship, no waves, no HUD — just the wordmark over the starfield.
       if(s.phase==="title"){
@@ -1176,7 +1164,7 @@ export default function InvadersGame(){
 
       const p=s.player;
       const spd=5*sc*SPEED;
-      p.y = mobile ? H * 0.93 : H * 0.88;
+      p.y = mobile ? H * 0.93 : shipRestY(H, sc, mobile);
       const prevX = p.x;
 
       // Pointer steering — touch on mobile, mouse on desktop — eases the ship toward the cursor.
