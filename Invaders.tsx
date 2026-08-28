@@ -188,14 +188,18 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   // Ship + prompt are anchored to the BOTTOM edge as a pair, not centred, so
   // the layout reads title-top / empty-middle / controls-bottom. Measured up
   // from the bottom: prompt first, then the ship 48px above it.
-  const shipSc = sc * (mobile ? 1.35 : 1.6);
+  // Same scale as the in-flight ship (not a bumped-up "hero" size) - it used
+  // to run 35-60% bigger here, which read fine alone but visibly changed size
+  // the instant a run started, and matching gameplay scale would have made
+  // the enemies look undersized next to it if this had gone the other way.
+  const shipSc = sc;
   const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*shipSc) / 2;
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const y = H - (mobile ? 64 : 76) - fpx;          // prompt text top
+  const y = H - (mobile ? 32 : 76) - fpx;          // prompt text top
   const px = W/2 - (tw + 5*sc + cw)/2;
 
   // Idle ship 48px above the prompt. moving=false, but the thruster still
@@ -882,7 +886,7 @@ function makeWave(wave: number, W: number, H: number, sc: number, mobile: boolea
 
 function initGame(W: number, H: number, mobile: boolean): GameState {
   const sc = scaleFor(W, H, mobile);
-  const playerY = mobile ? H * 0.78 : H * 0.88;
+  const playerY = mobile ? H * 0.93 : H * 0.88;
   return {
     t:0, sc, mobile, W, H,
     player:{ x:W/2, y:playerY, w:28*sc, h:28*sc, vx:0, hitT:0 },
@@ -1172,7 +1176,7 @@ export default function InvadersGame(){
 
       const p=s.player;
       const spd=5*sc*SPEED;
-      p.y = mobile ? H * 0.78 : H * 0.88;
+      p.y = mobile ? H * 0.93 : H * 0.88;
       const prevX = p.x;
 
       // Pointer steering — touch on mobile, mouse on desktop — eases the ship toward the cursor.
