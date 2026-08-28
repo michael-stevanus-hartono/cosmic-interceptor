@@ -30,6 +30,7 @@ interface GameState {
   waveMsg: number;
   overStart: number;   // ms timestamp the run ended; 0 until then
   endSel: number;      // end-screen selection: 0 = YES (default), 1 = NO
+  startSeed: number;   // reshuffles the "GAME START" block-dissolve each run
 }
 
 // Set to false to resume normal play. true = freeze gameplay + show wave/boss preview switcher.
@@ -83,6 +84,30 @@ function shipRestY(H: number, sc: number, mobile: boolean): number {
   const promptY = H - bottomPad - fpx;      // matches the title screen's prompt-text top
   return promptY - 48 - shipHalfH;          // ship sits 48px above the prompt
 }
+// Reveals `draw`'s output through a grid of randomly-timed square blocks
+// instead of all at once - the HUD's half of the "GAME START" transition.
+// Unlike the wordmark dissolve, the HUD isn't drawn from a cell grid (score
+// is a normal font string, lives are heart sprites), so this clips to a
+// generic block mask around the real draw call rather than reimplementing
+// each glyph - same random-reveal read, whatever content is underneath.
+function drawBlockReveal(ctx: CanvasRenderingContext2D, W: number, regionH: number, sc: number, seed: number, progress: number, draw: () => void): void {
+  if(progress <= 0) return;
+  if(progress >= 1){ draw(); return; }
+  const blockPx = Math.max(4, Math.round(8*sc));
+  const cols = Math.ceil(W/blockPx), rows = Math.ceil(regionH/blockPx);
+  ctx.save();
+  ctx.beginPath();
+  let idx = 0;
+  for(let ry=0; ry<rows; ry++){
+    for(let rx=0; rx<cols; rx++){
+      if(cellRand(seed, idx) <= progress) ctx.rect(rx*blockPx, ry*blockPx, blockPx, blockPx);
+      idx++;
+    }
+  }
+  ctx.clip();
+  draw();
+  ctx.restore();
+}
 // ── Title screen ──────────────────────────────────────────────────────────
 // "Space Invaders" is a registered trademark of Taito (USPTO 88984221, live in
 // the entertainment-services class), so the game ships under its own name.
@@ -128,6 +153,25 @@ const FONT5X7: Record<string, string> = {
 function titleCells(line: string): number {
   return line.length * GLYPH_W + Math.max(0, line.length - 1);
 }
+// Wordmark layout — shared by the title screen and the "GAME START" dissolve
+// transition, so the dissolving text lines up exactly where the static title
+// sat instead of being independently re-derived (and risking drift).
+const TITLE_LINE_GAP = 2;   // cells between wordmark lines
+function titleLayout(W: number, H: number, mobile: boolean): { lines: string[]; cell: number; top0: number } {
+  const lines = TITLE.split("\n");
+  const wide = Math.max(...lines.map(titleCells));
+  const tallCells = lines.length*GLYPH_H + (lines.length-1)*TITLE_LINE_GAP;
+  const cell = Math.max(2, Math.min((W*(mobile?0.74:0.52))/wide, (H*0.24)/tallCells));
+  const top0 = H*(mobile?0.10:0.09);
+  return { lines, cell, top0 };
+}
+// Cheap deterministic pseudo-random in [0,1), stable for a given (seed, i) -
+// used to give every block in a dissolve a fixed reveal/hide threshold that
+// doesn't reshuffle between frames (which would read as noise, not a wipe).
+function cellRand(seed: number, i: number): number {
+  const x = Math.sin(seed*12.9898 + i*78.233 + 1) * 43758.5453;
+  return x - Math.floor(x);
+}
 // Two passes: an offset copy for the edge, then the fill on top. Where they
 // two layers, as in the Claude Code wordmark: an offset copy drawn as a HOLLOW
 // silhouette outline (unfilled, so the background reads through it), then the
@@ -171,6 +215,43 @@ function drawPixelText(ctx: CanvasRenderingContext2D, line: string, cx: number, 
   }
 }
 
+// One line of the wordmark, drawn cell-by-cell with each lit cell randomly
+// missing once `progress` passes its own threshold — the "GAME START" title
+// dissolve. No outline pass (that pass reasons about neighbouring cells,
+// which reads as glitchy once neighbours vanish independently); a plain
+// solid block per cell is enough for a transient effect. Returns the next
+// cell index so a multi-line caller can keep every cell's threshold unique.
+function drawPixelTextDissolveLine(ctx: CanvasRenderingContext2D, line: string, cx: number, top: number, cell: number, seed: number, cellIndexStart: number, progress: number): number {
+  const gap = Math.max(1, Math.floor(cell*0.14));
+  const x0 = Math.round(cx - (titleCells(line)*cell)/2);
+  const chars = [...line.toUpperCase()];
+  let cur = x0, idx = cellIndexStart;
+  for(const ch of chars){
+    const g = FONT5X7[ch] ?? FONT5X7[" "];
+    for(let r=0;r<GLYPH_H;r++) for(let c=0;c<GLYPH_W;c++){
+      if(g[r*GLYPH_W+c]!=="1") continue;
+      const visible = cellRand(seed, idx) > progress;   // hides as progress rises
+      idx++;
+      if(visible) ctx.fillRect(cur + c*cell, top + r*cell, cell-gap, cell-gap);
+    }
+    cur += (GLYPH_W+1)*cell;
+  }
+  return idx;
+}
+// The whole wordmark, fading out in place at the same position/size it had
+// on the title screen (see titleLayout) so the transition reads as the title
+// itself scattering, not a new element popping in somewhere else.
+function drawTitleDissolve(ctx: CanvasRenderingContext2D, W: number, H: number, mobile: boolean, seed: number, progress: number): void {
+  if(progress >= 1) return;
+  const { lines, cell, top0 } = titleLayout(W, H, mobile);
+  ctx.fillStyle = TITLE_FILL;
+  let top = top0, idx = 0;
+  for(const ln of lines){
+    idx = drawPixelTextDissolveLine(ctx, ln, W/2, top, cell, seed, idx, progress);
+    top += (GLYPH_H+TITLE_LINE_GAP)*cell;
+  }
+}
+
 function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean): void {
   ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
 
@@ -189,13 +270,9 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
 
   // Wordmark — shrunk and pinned near the top, leaving the middle for the ship
   // and the bottom for the prompt instead of the old single centred stack.
-  const lines = TITLE.split("\n");
-  const wide = Math.max(...lines.map(titleCells));
-  const LINE_GAP = 2;                                   // cells between lines
-  const tallCells = lines.length*GLYPH_H + (lines.length-1)*LINE_GAP;
-  const cell = Math.max(2, Math.min((W*(mobile?0.74:0.52))/wide, (H*0.24)/tallCells));
-  let top = H*(mobile?0.10:0.09);
-  for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+LINE_GAP)*cell; }
+  const { lines, cell, top0 } = titleLayout(W, H, mobile);
+  let top = top0;
+  for(const ln of lines){ drawPixelText(ctx, ln, W/2, top, cell); top += (GLYPH_H+TITLE_LINE_GAP)*cell; }
 
   // Ship + prompt are anchored to the BOTTOM edge as a pair, not centred, so
   // the layout reads title-top / empty-middle / controls-bottom. The bottom
@@ -881,6 +958,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     stars:Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)})),
     waveMsg:0,
     overStart:0, endSel:0,
+    startSeed: Math.random(),
   };
 }
 
@@ -966,7 +1044,7 @@ export default function InvadersGame(){
     const s = stateRef.current;
     if(!s) return;
     sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
-    if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; }
+    if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; s.startSeed = Math.random(); }
     else if(s.phase === "dead" || s.phase === "won") confirmEnd();
   },[confirmEnd]);
 
@@ -1337,46 +1415,73 @@ export default function InvadersGame(){
       s.particles.forEach(pt=>{ ctx.globalAlpha=Math.max(0,pt.life); ctx.fillStyle=pt.color; ctx.fillRect(pt.x,pt.y,pt.size,pt.size); });
       ctx.globalAlpha=1;
 
+      // The very first intro of a run (wave 1 only - a replay's "GET READY"
+      // reuses the plain compact version below) gets its own send-off: the
+      // wordmark dissolves out block by block while the HUD dissolves in the
+      // same way, both driven by one 0->1 progress over the 180-frame intro.
+      const isStartTransition = s.wave===1 && s.introT>0 && !VISUAL_PAUSE;
+      const startProgress = isStartTransition ? (180 - s.introT)/180 : 1;
+      if(isStartTransition) drawTitleDissolve(ctx, W, H, mobile, s.startSeed, startProgress);
+
       // ── HUD ──
       const pad=12*sc;
       ctx.textBaseline="top";
-      // Score — stacked label over zero-padded value (top-left), cleared past the
-      // speaker button, which is a DOM overlay pinned at the same padding.
-      const mbox = muteBox(sc);
-      const scoreX = mbox.left + mbox.size + Math.round(10*sc);
-      ctx.textAlign="left";
-      ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
-      ctx.fillText("SCORE:", scoreX, 8*sc);
-      ctx.fillStyle="#9fb4d6"; ctx.font=`bold ${Math.round(16*sc)}px ${FONT}`;
-      ctx.fillText(String(s.score).padStart(SCORE_DIGITS,"0"), scoreX, 20*sc);
-      // Wave — top-center, with a blinking GET READY tucked underneath during
-      // the intro. Replaces the old full-screen banner, which covered the field.
-      ctx.textAlign="center";
-      if(s.phase==="boss"){
-        // The bar's own "FINAL BOSS" caption names the phase, so a wave label
-        // here would just be a second thing in the same 20px of screen.
-        // Held back during the intro so it doesn't overlap the GET READY blink.
-        if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc);
+      const drawHudContent = (): void => {
+        // Score — stacked label over zero-padded value (top-left), cleared past
+        // the speaker button, which is a DOM overlay pinned at the same padding.
+        const mbox = muteBox(sc);
+        const scoreX = mbox.left + mbox.size + Math.round(10*sc);
+        ctx.textAlign="left";
+        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillText("SCORE:", scoreX, 8*sc);
+        ctx.fillStyle="#ffffff"; ctx.font=`bold ${Math.round(16*sc)}px ${FONT}`;
+        ctx.fillText(String(s.score).padStart(SCORE_DIGITS,"0"), scoreX, 20*sc);
+        // Wave — top-center. Replaces the old full-screen banner that covered the field.
+        ctx.textAlign="center";
+        if(s.phase==="boss"){
+          // The bar's own "FINAL BOSS" caption names the phase, so a wave label
+          // here would just be a second thing in the same 20px of screen.
+          // Held back during the intro so it doesn't overlap the GET READY blink.
+          if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc);
+        } else {
+          ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
+          ctx.fillText(`WAVE ${s.wave}`, W/2, 8*sc);
+        }
+        // Lives — label + red pixel hearts (top-right)
+        ctx.textAlign="right";
+        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillText("LIVES", W-pad, 8*sc);
+        const hps=Math.max(1, Math.round(2*sc));
+        const hw=HEART[0].length*hps, hgap=Math.max(2,Math.round(4*sc));
+        const totalW=MAX_LIVES*hw+(MAX_LIVES-1)*hgap;
+        let hx=W-pad-totalW;
+        for(let i=0;i<MAX_LIVES;i++){
+          const filled = i >= MAX_LIVES - Math.max(0,s.lives);  // empty left-to-right
+          drawHeart(ctx, hx, 22*sc, hps, filled ? "#ff3b56" : "#8a3a48", filled);
+          hx+=hw+hgap;
+        }
+      };
+      if(isStartTransition){
+        // A different seed offset than the title dissolve so the two random
+        // patterns don't visibly correlate (same seed, disjoint cell ranges,
+        // but no reason to leave it coincidental).
+        drawBlockReveal(ctx, W, Math.round(40*sc), sc, s.startSeed*1.618034+91, startProgress, drawHudContent);
       } else {
-        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
-        ctx.fillText(`WAVE ${s.wave}`, W/2, 8*sc);
+        drawHudContent();
       }
-      if(s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
+      // "GAME START"/"GET READY" sit outside the HUD's reveal clip - they're
+      // new content announcing themselves via their own blink, not something
+      // that should dissolve in with the rest of the HUD.
+      ctx.textAlign="center";
+      if(isStartTransition){
+        const elapsed = 180 - s.introT;
+        if(Math.floor(elapsed/30)%2===0){
+          ctx.fillStyle="#ffffff"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+          ctx.fillText("GAME START", W/2, 22*sc);
+        }
+      } else if(s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
         ctx.fillStyle=TITLE_FILL; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("GET READY", W/2, 22*sc);
-      }
-      // Lives — label + red pixel hearts (top-right)
-      ctx.textAlign="right";
-      ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
-      ctx.fillText("LIVES", W-pad, 8*sc);
-      const hps=Math.max(1, Math.round(2*sc));
-      const hw=HEART[0].length*hps, hgap=Math.max(2,Math.round(4*sc));
-      const totalW=MAX_LIVES*hw+(MAX_LIVES-1)*hgap;
-      let hx=W-pad-totalW;
-      for(let i=0;i<MAX_LIVES;i++){
-        const filled = i >= MAX_LIVES - Math.max(0,s.lives);  // empty left-to-right
-        drawHeart(ctx, hx, 22*sc, hps, filled ? "#ff3b56" : "#8a3a48", filled);
-        hx+=hw+hgap;
       }
       ctx.textBaseline="alphabetic";
     }
