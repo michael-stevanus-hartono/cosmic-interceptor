@@ -1218,14 +1218,14 @@ export default function InvadersGame(){
       const keys = keysRef.current;
       const {sc,mobile}=s;
       s.t++;
-      // BGM plays on the entry screen, and through the "GET READY" intro beat.
-      // The intro extends the window on purpose: unlock() and this phase flip
-      // both fire inside the same tap, but AudioContext.resume() is async, so
-      // gating strictly to "title" raced the very next frame's bgmWanted=false
-      // against resume() finishing - on a fast resume the music never audibly
-      // started. Riding through the 3s intro gives resume() many frames to
-      // land instead of one, and doubles as a calm-before-the-fight beat.
-      sfxRef.current.setBgmWanted(s.phase==="title" || (s.phase==="waves" && s.introT>0));
+      // BGM plays only on the entry screen - cuts out the instant a run
+      // starts, including through "GAME START" and every later wave's "GET
+      // READY". (This used to also ride through the wave-1 intro so a fast
+      // AudioContext.resume() had more than one frame to land before the
+      // phase flip's bgmWanted=false raced it - moot now that BGM isn't
+      // meant to survive the tap anyway: unlock() still arms audio for SFX
+      // either way, and a title revisited later has ctx already running.)
+      sfxRef.current.setBgmWanted(s.phase==="title");
 
       // Title screen: no ship, no waves, no HUD — just the wordmark over the starfield.
       if(s.phase==="title"){
