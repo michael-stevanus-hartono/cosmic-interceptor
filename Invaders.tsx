@@ -58,6 +58,14 @@ const SPEED = 1.5;      // global gameplay speed multiplier (1 = original pace)
 const MAX_SCORE = 640;                          // 49 grunts x10 + boss 30 hits x5
 const SCORE_DIGITS = String(MAX_SCORE).length;  // 3 -> displays as 000
 
+// The very first wave's intro: the title dissolves out / HUD dissolves in
+// over START_DISSOLVE_FRAMES, "GAME START" blinking 3x in the title screen
+// prompt's old spot; then the ship eases down into its firing position over
+// START_SLIDE_FRAMES. Both are frame counts at the fixed 60Hz sim rate.
+const START_DISSOLVE_FRAMES = 120;   // 2s
+const START_SLIDE_FRAMES = 24;       // 0.4s
+const START_TOTAL_FRAMES = START_DISSOLVE_FRAMES + START_SLIDE_FRAMES;
+
 // ── Sound — tiny Web Audio synth, no assets. The muted flag lives inside the
 // closure so the game loop can fire-and-forget without touching React state. ──
 const MUTE_BTN = 30;   // speaker button size (CSS px at sc=1); the score HUD shifts right past it
@@ -72,17 +80,28 @@ function muteBox(sc: number): { size: number; left: number; top: number } {
   const size = Math.round(MUTE_BTN * Math.min(1.6, Math.max(0.85, sc)));
   return { size, left: Math.round(12*sc), top: Math.max(4, Math.round(23*sc - size/2)) };
 }
-// Where the ship rests, vertically — shared by the title screen and gameplay
-// so they can't independently drift apart the way they did twice already
-// (once on mobile, once on desktop). Desktop mirrors the title wordmark's
-// H*0.09 top margin on the bottom edge for a symmetric top/bottom pad;
-// mobile keeps its own hand-tuned bottom margin from the last round.
-function shipRestY(H: number, sc: number, mobile: boolean): number {
-  const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*sc) / 2;
+// Top of the title screen's prompt text ("PRESS ENTER TO START"/"TAP TO
+// START", and "GAME START" during the intro that replaces it in place).
+// Shared so none of the three call sites below can independently drift
+// apart the way the title and gameplay ship position already did twice.
+// Desktop mirrors the title wordmark's H*0.09 top margin on the bottom edge
+// for a symmetric top/bottom pad; mobile keeps its own hand-tuned margin.
+function promptTopY(H: number, sc: number, mobile: boolean): number {
   const fpx = Math.round(13*sc);
   const bottomPad = mobile ? 32 : H*0.09;
-  const promptY = H - bottomPad - fpx;      // matches the title screen's prompt-text top
-  return promptY - 48 - shipHalfH;          // ship sits 48px above the prompt
+  return H - bottomPad - fpx;
+}
+// Where the ship sits on the title screen (and starts from, at the top of
+// the "GAME START" intro) - 48px above the prompt text.
+function shipRestY(H: number, sc: number, mobile: boolean): number {
+  const shipHalfH = JET_SPRITE.grid.length * Math.max(1, 1.5*sc) / 2;
+  return promptTopY(H, sc, mobile) - 48 - shipHalfH;
+}
+// Where the ship actually flies once a run is underway - the same spot the
+// title screen's prompt text occupied, since the intro eases the ship down
+// into "the press enter to start space" as GAME START finishes.
+function gameplayShipY(H: number, sc: number, mobile: boolean): number {
+  return promptTopY(H, sc, mobile);
 }
 // Reveals `draw`'s output through a grid of randomly-timed square blocks
 // instead of all at once - the HUD's half of the "GAME START" transition.
@@ -286,13 +305,11 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   ctx.textBaseline="top"; ctx.textAlign="left";
   ctx.font=`bold ${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
-  const y = H - (mobile ? 32 : H*0.09) - fpx;      // prompt text top
+  const y = promptTopY(H, sc, mobile);
   const px = W/2 - (tw + 5*sc + cw)/2;
 
-  // Idle ship 48px above the prompt (see shipRestY - also what gameplay uses,
-  // so the ship doesn't jump position the instant a run starts). moving=false,
-  // but the thruster still animates so the screen isn't static before a run
-  // starts.
+  // Idle ship 48px above the prompt (see shipRestY). moving=false, but the
+  // thruster still animates so the screen isn't static before a run starts.
   const shipY = shipRestY(H, sc, mobile);
   drawJet(ctx, W/2, shipY, sc, t, false);
 
@@ -944,7 +961,7 @@ function makeWave(wave: number, W: number, H: number, sc: number, mobile: boolea
 
 function initGame(W: number, H: number, mobile: boolean): GameState {
   const sc = scaleFor(W, H, mobile);
-  const playerY = mobile ? H * 0.93 : shipRestY(H, sc, mobile);
+  const playerY = gameplayShipY(H, sc, mobile);
   return {
     t:0, sc, mobile, W, H,
     player:{ x:W/2, y:playerY, w:28*sc, h:28*sc, vx:0, hitT:0 },
@@ -953,7 +970,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     mothership:{ x:W/2, y: 150*sc, w:BOSS_COLS*BOSS_PX(sc), h:BOSS_ROWS*BOSS_PX(sc), hp:30, maxHp:30, vx:1.5*sc*SPEED, sideCD:0, coreCD:Math.floor(rand(5,7)*60), chargeT:0, beamT:0 },
     phase:"title", wave:1, score:0, lives:MAX_LIVES, enemyDir:1,
     fireCD:0, enemyFireCD:60, bossFireCD:90,
-    introT: 180,
+    introT: START_TOTAL_FRAMES,
     particles:[],
     stars:Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)})),
     waveMsg:0,
@@ -1044,7 +1061,7 @@ export default function InvadersGame(){
     const s = stateRef.current;
     if(!s) return;
     sfxRef.current.unlock();               // this is a user gesture — good moment to arm audio
-    if(s.phase === "title"){ s.phase = "waves"; s.introT = 180; s.startSeed = Math.random(); }
+    if(s.phase === "title"){ s.phase = "waves"; s.introT = START_TOTAL_FRAMES; s.startSeed = Math.random(); }
     else if(s.phase === "dead" || s.phase === "won") confirmEnd();
   },[confirmEnd]);
 
@@ -1240,9 +1257,28 @@ export default function InvadersGame(){
       const inIntro = (s.introT > 0) || VISUAL_PAUSE;
       if(s.introT > 0){ s.introT--; }
 
+      // The very first wave's intro runs its own two-beat sequence (dissolve,
+      // then a short slide into firing position) instead of the plain
+      // "GET READY" every later wave/boss intro uses. Computed once here so
+      // the sim step and the draw pass below read the same numbers.
+      const isStartTransition = s.wave===1 && s.introT>0 && !VISUAL_PAUSE;
+      const startElapsed = isStartTransition ? START_TOTAL_FRAMES - s.introT : 0;
+      const inDissolvePhase = isStartTransition && startElapsed < START_DISSOLVE_FRAMES;
+      const dissolveProgress = isStartTransition ? Math.min(1, startElapsed/START_DISSOLVE_FRAMES) : 1;
+
       const p=s.player;
       const spd=5*sc*SPEED;
-      p.y = mobile ? H * 0.93 : shipRestY(H, sc, mobile);
+      if(inDissolvePhase){
+        p.y = shipRestY(H, sc, mobile);         // static at the title screen's spot
+      } else if(isStartTransition){
+        // Eases down into the firing position over the last START_SLIDE_FRAMES
+        // once the dissolve/blink is done - "the press enter to start space".
+        const slideT = Math.min(1, (startElapsed-START_DISSOLVE_FRAMES)/START_SLIDE_FRAMES);
+        const from = shipRestY(H, sc, mobile), to = gameplayShipY(H, sc, mobile);
+        p.y = from + (to-from)*slideT;
+      } else {
+        p.y = gameplayShipY(H, sc, mobile);
+      }
       const prevX = p.x;
 
       // Pointer steering — touch on mobile, mouse on desktop — eases the ship toward the cursor.
@@ -1377,7 +1413,9 @@ export default function InvadersGame(){
       s.stars.forEach(st=>{ ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
       ctx.globalAlpha=1;
 
-      if(s.phase==="waves") s.enemies.forEach(e=>{ if(e.alive) drawEnemy(ctx,e.x,e.y,s.t,sc); });
+      // Held back until the title's fully dissolved - the formation "enters"
+      // once the wordmark is out of the way, instead of sitting there behind it.
+      if(s.phase==="waves" && !inDissolvePhase) s.enemies.forEach(e=>{ if(e.alive) drawEnemy(ctx,e.x,e.y,s.t,sc); });
       if(((s.phase as Phase)==="boss"||(s.phase as Phase)==="won")&&s.mothership.hp>0){
         const m=s.mothership, bp=BOSS_PX(sc);
         const muzzleY=m.y+14*bp, sidePod=25*bp, sideY=m.y-4*bp;
@@ -1415,13 +1453,10 @@ export default function InvadersGame(){
       s.particles.forEach(pt=>{ ctx.globalAlpha=Math.max(0,pt.life); ctx.fillStyle=pt.color; ctx.fillRect(pt.x,pt.y,pt.size,pt.size); });
       ctx.globalAlpha=1;
 
-      // The very first intro of a run (wave 1 only - a replay's "GET READY"
-      // reuses the plain compact version below) gets its own send-off: the
-      // wordmark dissolves out block by block while the HUD dissolves in the
-      // same way, both driven by one 0->1 progress over the 180-frame intro.
-      const isStartTransition = s.wave===1 && s.introT>0 && !VISUAL_PAUSE;
-      const startProgress = isStartTransition ? (180 - s.introT)/180 : 1;
-      if(isStartTransition) drawTitleDissolve(ctx, W, H, mobile, s.startSeed, startProgress);
+      // The wordmark dissolves out block by block while the HUD dissolves in
+      // the same way, both driven by dissolveProgress (computed above, with
+      // isStartTransition/inDissolvePhase/startElapsed).
+      if(isStartTransition) drawTitleDissolve(ctx, W, H, mobile, s.startSeed, dissolveProgress);
 
       // ── HUD ──
       const pad=12*sc;
@@ -1465,21 +1500,22 @@ export default function InvadersGame(){
         // A different seed offset than the title dissolve so the two random
         // patterns don't visibly correlate (same seed, disjoint cell ranges,
         // but no reason to leave it coincidental).
-        drawBlockReveal(ctx, W, Math.round(40*sc), sc, s.startSeed*1.618034+91, startProgress, drawHudContent);
+        drawBlockReveal(ctx, W, Math.round(40*sc), sc, s.startSeed*1.618034+91, dissolveProgress, drawHudContent);
       } else {
         drawHudContent();
       }
-      // "GAME START"/"GET READY" sit outside the HUD's reveal clip - they're
-      // new content announcing themselves via their own blink, not something
-      // that should dissolve in with the rest of the HUD.
       ctx.textAlign="center";
-      if(isStartTransition){
-        const elapsed = 180 - s.introT;
-        if(Math.floor(elapsed/30)%2===0){
-          ctx.fillStyle="#ffffff"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
-          ctx.fillText("GAME START", W/2, 22*sc);
+      if(inDissolvePhase){
+        // "GAME START" takes over the title screen's own prompt spot (same
+        // position/size as "PRESS ENTER TO START"/"TAP TO START"), blinking
+        // 3x over the dissolve - it's outside the HUD's reveal clip since
+        // it's new content announcing itself, not something dissolving in.
+        if(Math.floor(startElapsed/(START_DISSOLVE_FRAMES/6))%2===0){
+          const gfpx = Math.round(13*sc);
+          ctx.fillStyle="#ffffff"; ctx.font=`bold ${gfpx}px ${FONT}`;
+          ctx.fillText("GAME START", W/2, promptTopY(H, sc, mobile));
         }
-      } else if(s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
+      } else if(!isStartTransition && s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
         ctx.fillStyle=TITLE_FILL; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("GET READY", W/2, 22*sc);
       }
