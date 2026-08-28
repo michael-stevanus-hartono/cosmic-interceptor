@@ -66,6 +66,12 @@ const MUTE_BTN = 30;   // speaker button size (CSS px at sc=1); the score HUD sh
 function scaleFor(W: number, H: number, mobile: boolean): number {
   return mobile ? (W/360)*0.85 : Math.min(W/900, H/560);
 }
+// A flat star count looked sparse on a big desktop viewport and cramped on a
+// small one, since neither scales with actual screen area. One star per
+// ~1800px^2 keeps the field reading equally crowded at any size.
+function starCount(W: number, H: number): number {
+  return Math.max(120, Math.min(900, Math.round((W*H)/1800)));
+}
 // Speaker button box, vertically centered against the two-line score block.
 function muteBox(sc: number): { size: number; left: number; top: number } {
   const size = Math.round(MUTE_BTN * Math.min(1.6, Math.max(0.85, sc)));
@@ -893,7 +899,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     fireCD:0, enemyFireCD:60, bossFireCD:90,
     introT: 180,
     particles:[],
-    stars:Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)})),
+    stars:Array.from({length:starCount(W,H)},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)})),
     waveMsg:0,
     overStart:0, endSel:0,
   };
@@ -927,7 +933,7 @@ function rescale(s: GameState, W: number, H: number, mobile: boolean): void {
   m.vx = (m.vx < 0 ? -1 : 1) * 1.5*sc*SPEED;
 
   // Stars are decorative and uniformly random, so respreading beats stretching.
-  s.stars = Array.from({length:80},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)}));
+  s.stars = Array.from({length:starCount(W,H)},()=>({x:rand(0,W),y:rand(0,H),size:rand(1,2.5),b:rand(0.3,1)}));
 }
 
 export default function InvadersGame(){
