@@ -31,6 +31,7 @@ interface GameState {
   overStart: number;   // ms timestamp the run ended; 0 until then
   endSel: number;      // end-screen selection: 0 = YES (default), 1 = NO
   startSeed: number;   // reshuffles the "GAME START" block-dissolve each run
+  bossDeathT: number;  // 0 = boss alive/not yet destroyed; >0 = frames into the death sequence
 }
 
 // Set to false to resume normal play. true = freeze gameplay + show wave/boss preview switcher.
@@ -56,8 +57,10 @@ function overlap(a: Rect, b: Rect): boolean { return a.x<b.x+b.w && a.x+a.w>b.x 
 // restarting countdown, boss bar label) - everywhere `ctx.font` is set
 // directly. The big pixel wordmark (title, GAME OVER, MISSION COMPLETE) is a
 // separate hand-authored bitmap font (FONT5X7/drawPixelText) and doesn't use
-// this at all, so it's unaffected by changing it here.
-const FONT = "'Silkscreen', 'Courier New', monospace";
+// this at all, so it's unaffected by changing it here. Weight is 400 (only
+// weight loaded) - none of these `ctx.font` calls prefix "bold" any more, so
+// the canvas doesn't synthetically embolden a weight that isn't loaded.
+const FONT = "'Pixelify Sans', sans-serif";
 const MAX_LIVES = 5;
 const SPEED = 1.5;      // global gameplay speed multiplier (1 = original pace)
 const MAX_SCORE = 640;                          // 49 grunts x10 + boss 30 hits x5
@@ -312,7 +315,7 @@ function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc
   const msg = mobile ? "TAP TO START" : "PRESS ENTER TO START";
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
-  ctx.font=`bold ${fpx}px ${FONT}`;
+  ctx.font=`${fpx}px ${FONT}`;
   const tw = ctx.measureText(msg).width, cw = Math.round(9*sc);
   const y = promptTopY(H, sc, mobile);
   const px = W/2 - (tw + 5*sc + cw)/2;
@@ -354,14 +357,14 @@ type EndButtons = { yes: Rect; no: Rect };
 function drawStatRow(ctx: CanvasRenderingContext2D, label: string, value: string, cx: number, y: number, sc: number): number {
   const lpx = Math.round(11*sc), vpx = Math.round(17*sc);
   ctx.textBaseline="top"; ctx.textAlign="left";
-  ctx.font=`bold ${lpx}px ${FONT}`;
+  ctx.font=`${lpx}px ${FONT}`;
   const lw = ctx.measureText(label).width;
-  ctx.font=`bold ${vpx}px ${FONT}`;
+  ctx.font=`${vpx}px ${FONT}`;
   const vw = ctx.measureText(value).width;
   const gap = 10*sc, x0 = cx - (lw + gap + vw)/2;
-  ctx.font=`bold ${lpx}px ${FONT}`;   ctx.fillStyle="#5a6b88";
+  ctx.font=`${lpx}px ${FONT}`;   ctx.fillStyle="#5a6b88";
   ctx.fillText(label, x0, y + (vpx-lpx)*0.65);          // baseline-align to the value
-  ctx.font=`bold ${vpx}px ${FONT}`;   ctx.fillStyle="#ffffff";
+  ctx.font=`${vpx}px ${FONT}`;   ctx.fillStyle="#ffffff";
   ctx.fillText(value, x0 + lw + gap, y);
   return y + vpx;
 }
@@ -387,7 +390,7 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   // "PLAY AGAIN?" prompt
   const fpx = Math.round(13*sc);
   ctx.textBaseline="top"; ctx.textAlign="center";
-  ctx.font=`bold ${fpx}px ${FONT}`;
+  ctx.font=`${fpx}px ${FONT}`;
   const py = y + (mobile ? 30 : 42);
   ctx.fillStyle="#ffffff"; ctx.fillText("PLAY AGAIN?", W/2, py);
 
@@ -403,7 +406,7 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
   // off-centre (only one caret is ever inked, so a slot reserved on both
   // sides leaves asymmetric dead space). Same side-by-side layout on mobile
   // and desktop; only the tap target's height differs below.
-  ctx.font=`bold ${optPx}px ${FONT}`; ctx.textAlign="left";
+  ctx.font=`${optPx}px ${FONT}`; ctx.textAlign="left";
   const yesW = ctx.measureText("YES").width, noW = ctx.measureText("NO").width;
   const optGap = 48*sc;
   const totalW = yesW + optGap + noW;
@@ -435,7 +438,7 @@ function drawResultScreen(ctx: CanvasRenderingContext2D, W: number, H: number, s
 
   // Countdown to the automatic restart — unchanged behaviour, just moved below.
   const cpx = Math.round(11*sc);
-  ctx.font=`bold ${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
+  ctx.font=`${cpx}px ${FONT}`; ctx.textAlign="center"; ctx.fillStyle="#5a6b88";
   ctx.fillText(`RESTARTING IN ${o.secsLeft}`, W/2, afterOptionsY + 16*sc);
   ctx.textBaseline="alphabetic";
 
@@ -840,6 +843,16 @@ const BEAM_TIME = 120;     // ~2s beam (boss freezes)
 const INVULN = 60;         // player i-frames after any hit (beam can't drain all lives)
 const PART2_IMMUNE = 300;  // 5s @ 60fps: shielded the instant bar 1 empties, while the forced beam plays
 
+// Boss death: three parts (centre, left, right) go off in a stagger rather
+// than all at once - each is a growing spark, then a held fireball, then it
+// dissipates into a red particle burst (the enemy-grunt death colour/style).
+// The "won" phase transition waits for the whole thing to finish playing.
+const BOSS_DEATH_PARTS = 3;
+const BOSS_DEATH_PART_GAP = 12;    // frames between each part's sequence starting
+const BOSS_DEATH_SPARK = 12;       // frames of the growing spark
+const BOSS_DEATH_FIREBALL = 18;    // frames held as a fireball before dissipating
+const BOSS_DEATH_TOTAL = (BOSS_DEATH_PARTS-1)*BOSS_DEATH_PART_GAP + BOSS_DEATH_SPARK + BOSS_DEATH_FIREBALL + 14;
+
 // Boss thrusters — 4 jets off the back vents (2 inner shoulder, 2 outer), flames trail UP.
 // Orange palette matched to the enemy grunts (EFLAME) so the faction reads consistently.
 const BFLAME = { core:"#ffd27a", mid:"#ff9a2b", deep:"#ff6a1f" };
@@ -925,7 +938,7 @@ function drawBossBar(ctx: CanvasRenderingContext2D, W: number, hp: number, maxHp
   const f2 = Math.max(0, Math.min(1, hp/half));           // 50% -> 0% (pinned full above 50%)
   ctx.save();
   ctx.textAlign="center"; ctx.textBaseline="top";
-  ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
+  ctx.font=`${Math.round(11*sc)}px ${FONT}`;
   // The boss sits high enough that its upward thrusters reach this strip, so
   // the group gets a dark backing to stay legible over whatever is behind it.
   const padX = 10*sc, padY = 5*sc;
@@ -982,6 +995,45 @@ function drawBeam(ctx: CanvasRenderingContext2D, cx: number, originY: number, H:
   ctx.restore();
 }
 
+// A handful of stray ember pixels scattered around the fireball's main body,
+// at fixed angles/distances (in un-scaled cells) so they read as debris
+// rather than a perfect ring - matches the scattered-dot look of a hand-drawn
+// pixel explosion sprite.
+const FIREBALL_EMBERS: [number, number][] = [
+  [0,-15], [-13,-9], [13,-9], [-16,3], [16,3], [-6,14], [7,15],
+];
+// Bright core, orange ring, ragged embers - the boss death's "fireball" beat.
+// `flicker` (0..1) is a cheap per-frame shimmer, not a growth animation.
+function drawFireball(ctx: CanvasRenderingContext2D, cx: number, cy: number, sc: number, flicker: number): void {
+  const r = 13*sc*(0.94 + flicker*0.06);
+  const g2 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+  g2.addColorStop(0, "#fff3c4");
+  g2.addColorStop(0.45, "#ffd23f");
+  g2.addColorStop(0.8, "#ff8c1a");
+  g2.addColorStop(1, "rgba(255,90,26,0)");
+  ctx.fillStyle = g2;
+  ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  ctx.fillStyle = "#ff9a2b";
+  const es = 3*sc;
+  FIREBALL_EMBERS.forEach(([ox,oy])=>{ ctx.fillRect(cx+ox*sc-es/2, cy+oy*sc-es/2, es, es); });
+}
+// One of the boss's three death parts, at its own local clock (can be
+// negative - "hasn't started yet" - or past the end - "already dissipated,
+// nothing left to draw here", since the particle system carries it from there).
+function drawBossDeathPart(ctx: CanvasRenderingContext2D, cx: number, cy: number, sc: number, t: number, localT: number): void {
+  if(localT<=0 || localT>BOSS_DEATH_SPARK+BOSS_DEATH_FIREBALL) return;
+  if(localT<=BOSS_DEATH_SPARK){
+    const grow = localT/BOSS_DEATH_SPARK;
+    const r = (2+grow*7)*sc;
+    const g3 = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+    g3.addColorStop(0, "rgba(255,247,214,0.95)");
+    g3.addColorStop(1, "rgba(255,150,40,0)");
+    ctx.fillStyle = g3; ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI*2); ctx.fill();
+  } else {
+    drawFireball(ctx, cx, cy, sc, Math.sin(t*0.5+cx)*0.5+0.5);
+  }
+}
+
 function makeWave(wave: number, W: number, H: number, sc: number, mobile: boolean): Enemy[] {
   const cols=Math.min(4+wave, mobile?5:8);
   const rows=Math.min(1+wave,3);
@@ -1012,6 +1064,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     waveMsg:0,
     overStart:0, endSel:0,
     startSeed: Math.random(),
+    bossDeathT: 0,
   };
 }
 
@@ -1343,7 +1396,12 @@ export default function InvadersGame(){
       s.enemyBullets=s.enemyBullets.filter(b=>{
         const br=b.r||3*sc;
         if(overlap({x:b.x-br,y:b.y-br,w:br*2,h:br*2},{x:p.x-14*sc,y:p.y-14*sc,w:28*sc,h:28*sc})){
-          if(p.hitT<=0){ addParticles(p.x,p.y,"#00cfff",12); s.lives--; p.hitT=INVULN; if(s.lives<=0) s.phase="dead"; }
+          if(p.hitT<=0){
+            addParticles(p.x,p.y,"#00cfff",12); s.lives--; p.hitT=INVULN;
+            // Ship breaks apart into blue pixels on the killing blow - same
+            // burst technique as an enemy grunt's death, just the ship's blue.
+            if(s.lives<=0){ addParticles(p.x,p.y,"#00cfff",20); s.phase="dead"; }
+          }
           return false;
         }
         return true;
@@ -1366,10 +1424,10 @@ export default function InvadersGame(){
         if(hitWall){ s.enemyDir*=-1; alive.forEach(e=>{ e.x+=s.enemyDir*stepX*2; }); }
 
         // breach — an enemy slipping past your line ends the run
-        if(alive.some(e=>e.y>p.y)){ s.lives=0; s.phase="dead"; }
+        if(alive.some(e=>e.y>p.y)){ s.lives=0; addParticles(p.x,p.y,"#00cfff",20); s.phase="dead"; }
 
         if(alive.some(e=>overlap({x:e.x-11*sc,y:e.y-8*sc,w:22*sc,h:16*sc},{x:p.x-14*sc,y:p.y-14*sc,w:28*sc,h:28*sc}))){
-          s.lives=0; s.phase="dead";
+          s.lives=0; addParticles(p.x,p.y,"#00cfff",20); s.phase="dead";
         }
 
         s.bullets=s.bullets.filter(b=>{
@@ -1383,7 +1441,7 @@ export default function InvadersGame(){
         });
         if(s.enemies.every(e=>!e.alive)){
           s.wave++;
-          if(s.wave>3){ s.phase="boss"; s.enemyBullets=[]; s.introT=120; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; s.mothership.immuneT=0; }
+          if(s.wave>3){ s.phase="boss"; s.enemyBullets=[]; s.introT=120; s.bossDeathT=0; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; s.mothership.immuneT=0; }
           else{ s.enemies=makeWave(s.wave,W,H,sc,mobile); s.enemyDir=1; s.waveMsg=90; s.introT=90; }
         }
       }
@@ -1391,6 +1449,24 @@ export default function InvadersGame(){
       if(!inIntro && s.phase==="boss"){
         const m=s.mothership;
         const bp=BOSS_PX(sc);
+
+        if(s.bossDeathT>0){
+          // Boss is destroyed - no more movement/cannons/beam, just the
+          // staggered spark -> fireball -> dissipate sequence per part, then
+          // hand off to the win screen once the last part has finished.
+          s.bossDeathT++;
+          for(let i=0;i<BOSS_DEATH_PARTS;i++){
+            const localT = s.bossDeathT - i*BOSS_DEATH_PART_GAP;
+            if(localT === BOSS_DEATH_SPARK+BOSS_DEATH_FIREBALL+1){
+              const px = m.x + (i===0 ? 0 : i===1 ? -40*sc : 40*sc);
+              addParticles(px, m.y, "#ff3366", 14);   // dissipates red, like an enemy grunt
+            }
+          }
+          if(s.bossDeathT > BOSS_DEATH_TOTAL) s.phase="won";
+          // Everything else (particle physics, waveMsg) is handled by the
+          // general post-block update below, same as every other phase.
+        } else {
+
         const margin=BOSS_COLS*bp*0.5 + 6;
         if(m.immuneT>0) m.immuneT--;
         if(m.beamT<=0){ m.x+=m.vx; if(m.x>W-margin||m.x<margin) m.vx*=-1; }  // freeze while the beam fires
@@ -1418,7 +1494,10 @@ export default function InvadersGame(){
             const inC=Math.abs(p.x-m.x)<3*bp && p.y>muzzleY;
             const inL=Math.abs(p.x-(m.x-sidePod))<2*bp && p.y>sideY;
             const inR=Math.abs(p.x-(m.x+sidePod))<2*bp && p.y>sideY;
-            if((inC||inL||inR) && p.hitT<=0){ addParticles(p.x,p.y,"#00cfff",12); s.lives--; p.hitT=INVULN; if(s.lives<=0) s.phase="dead"; }  // INVULN(60) within BEAM_TIME(120) => up to 2 lives per beam
+            if((inC||inL||inR) && p.hitT<=0){
+              addParticles(p.x,p.y,"#00cfff",12); s.lives--; p.hitT=INVULN;
+              if(s.lives<=0){ addParticles(p.x,p.y,"#00cfff",20); s.phase="dead"; }
+            }  // INVULN(60) within BEAM_TIME(120) => up to 2 lives per beam
             if(m.beamT<=0) m.coreCD=Math.floor(rand(6,9)*60);
           } else if(m.chargeT>0){
             m.chargeT--;
@@ -1447,11 +1526,16 @@ export default function InvadersGame(){
               m.chargeT = CORE_CHARGE;
               m.beamT = 0;
             }
-            if(m.hp<=0){ addParticles(m.x,m.y,"#ff7a2b",30); addParticles(m.x-40*sc,m.y,"#caa24a",18); addParticles(m.x+40*sc,m.y,"#ff2e4d",18); s.phase="won"; }
+            // Kick off the staged death sequence instead of an instant cut to
+            // the win screen - drawBossDeathPart/the s.bossDeathT>0 branch
+            // above take it from here.
+            if(m.hp<=0) s.bossDeathT=1;
             return false;
           }
           return true;
         });
+
+        }
       }
 
       s.particles=s.particles.filter(pt=>pt.life>0);
@@ -1474,6 +1558,13 @@ export default function InvadersGame(){
           drawBeamTelegraph(ctx,m.x,muzzleY,H,sc,tch);
           drawBeamTelegraph(ctx,m.x-sidePod,sideY,H,sc,tch);
           drawBeamTelegraph(ctx,m.x+sidePod,sideY,H,sc,tch);
+        }
+      }
+      if(s.bossDeathT>0){
+        const m=s.mothership;
+        for(let i=0;i<BOSS_DEATH_PARTS;i++){
+          const px = m.x + (i===0 ? 0 : i===1 ? -40*sc : 40*sc);
+          drawBossDeathPart(ctx, px, m.y, sc, s.t, s.bossDeathT - i*BOSS_DEATH_PART_GAP);
         }
       }
       const isMoving = Math.abs(p.x - prevX) > 0.5;
@@ -1516,9 +1607,9 @@ export default function InvadersGame(){
         const mbox = muteBox(sc);
         const scoreX = mbox.left + mbox.size + Math.round(10*sc);
         ctx.textAlign="left";
-        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillStyle="#5a6b88"; ctx.font=`${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("SCORE:", scoreX, 8*sc);
-        ctx.fillStyle="#ffffff"; ctx.font=`bold ${Math.round(16*sc)}px ${FONT}`;
+        ctx.fillStyle="#ffffff"; ctx.font=`${Math.round(16*sc)}px ${FONT}`;
         ctx.fillText(String(s.score).padStart(SCORE_DIGITS,"0"), scoreX, 20*sc);
         // Wave — top-center. Replaces the old full-screen banner that covered the field.
         ctx.textAlign="center";
@@ -1528,12 +1619,12 @@ export default function InvadersGame(){
           // Held back during the intro so it doesn't overlap the GET READY blink.
           if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc, s.mothership.immuneT>0);
         } else {
-          ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
+          ctx.fillStyle="#5a6b88"; ctx.font=`${Math.round(11*sc)}px ${FONT}`;
           ctx.fillText(`WAVE ${s.wave}`, W/2, 8*sc);
         }
         // Lives — label + red pixel hearts (top-right)
         ctx.textAlign="right";
-        ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillStyle="#5a6b88"; ctx.font=`${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("LIVES", W-pad, 8*sc);
         const hps=Math.max(1, Math.round(2*sc));
         const hw=HEART[0].length*hps, hgap=Math.max(2,Math.round(4*sc));
@@ -1561,11 +1652,11 @@ export default function InvadersGame(){
         // it's new content announcing itself, not something dissolving in.
         if(Math.floor(startElapsed/(START_DISSOLVE_FRAMES/6))%2===0){
           const gfpx = Math.round(13*sc);
-          ctx.fillStyle="#ffffff"; ctx.font=`bold ${gfpx}px ${FONT}`;
+          ctx.fillStyle="#ffffff"; ctx.font=`${gfpx}px ${FONT}`;
           ctx.fillText("GAME START", W/2, promptTopY(H, sc, mobile));
         }
       } else if(!isStartTransition && s.introT>0 && !VISUAL_PAUSE && Math.floor(s.t/20)%2===0){
-        ctx.fillStyle=TITLE_FILL; ctx.font=`bold ${Math.round(10*sc)}px ${FONT}`;
+        ctx.fillStyle=TITLE_FILL; ctx.font=`${Math.round(10*sc)}px ${FONT}`;
         ctx.fillText("GET READY", W/2, 22*sc);
       }
       ctx.textBaseline="alphabetic";
