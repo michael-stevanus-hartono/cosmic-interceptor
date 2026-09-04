@@ -11,7 +11,7 @@ interface Player { x: number; y: number; w: number; h: number; vx: number; hitT:
 interface Bullet { x: number; y: number; w: number; h: number; }
 interface EnemyBullet { x: number; y: number; vx?: number; vy?: number; r?: number; color?: string; big?: boolean; }
 interface Enemy { x: number; y: number; w: number; h: number; alive: boolean; homeX?: number; phase?: number; }
-interface Mothership { x: number; y: number; w: number; h: number; hp: number; maxHp: number; vx: number; sideCD: number; coreCD: number; chargeT: number; beamT: number; }
+interface Mothership { x: number; y: number; w: number; h: number; hp: number; maxHp: number; vx: number; sideCD: number; coreCD: number; chargeT: number; beamT: number; immuneT: number; }
 interface Particle { x: number; y: number; vx: number; vy: number; life: number; color: string; size: number; }
 interface Star { x: number; y: number; size: number; b: number; }
 
@@ -52,7 +52,12 @@ function rand(a: number, b: number): number { return Math.random()*(b-a)+a; }
 function overlap(a: Rect, b: Rect): boolean { return a.x<b.x+b.w && a.x+a.w>b.x && a.y<b.y+b.h && a.y+a.h>b.y; }
 
 // ── HUD styling ──
-const FONT = "'Courier New', ui-monospace, monospace";
+// Regular UI text (score, wave label, GET READY/GAME START, prompts, YES/NO,
+// restarting countdown, boss bar label) - everywhere `ctx.font` is set
+// directly. The big pixel wordmark (title, GAME OVER, MISSION COMPLETE) is a
+// separate hand-authored bitmap font (FONT5X7/drawPixelText) and doesn't use
+// this at all, so it's unaffected by changing it here.
+const FONT = "'Silkscreen', 'Courier New', monospace";
 const MAX_LIVES = 5;
 const SPEED = 1.5;      // global gameplay speed multiplier (1 = original pace)
 const MAX_SCORE = 640;                          // 49 grunts x10 + boss 30 hits x5
@@ -271,21 +276,25 @@ function drawTitleDissolve(ctx: CanvasRenderingContext2D, W: number, H: number, 
   }
 }
 
-function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean): void {
-  ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
-
-  // Scrolling starfield, wrapped so it loops forever — gives the impression
-  // the (idle, stationary) ship is flying forward. Nearer-looking (bigger)
-  // stars drift faster for a cheap parallax read. Speed is driven by `t`,
-  // which only advances once per fixed 60Hz simulation tick (see step()) —
-  // never by wall-clock or raw rAF frames — so this can't silently double
-  // speed on a 120Hz display the way the pre-fix game loop once did.
+// Scrolling starfield, wrapped so it loops forever — gives the impression of
+// forward motion even though nothing else on screen is actually moving down.
+// Nearer-looking (bigger) stars drift faster for a cheap parallax read. Speed
+// is driven by `t`, which only advances once per fixed 60Hz simulation tick
+// (see step()) — never by wall-clock or raw rAF frames — so this can't
+// silently double speed on a 120Hz display the way the pre-fix game loop
+// once did. Shared by the title screen and gameplay so both drift together.
+function drawStarfield(ctx: CanvasRenderingContext2D, H: number, sc: number, t: number, stars: Star[]): void {
   stars.forEach(st=>{
     const speed = sc * (0.35 + st.size*0.35);
     const y = ((st.y + t*speed) % H + H) % H;
     ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x, y, st.size, st.size);
   });
   ctx.globalAlpha=1;
+}
+
+function drawTitleScreen(ctx: CanvasRenderingContext2D, W: number, H: number, sc: number, t: number, stars: Star[], mobile: boolean): void {
+  ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
+  drawStarfield(ctx, H, sc, t, stars);
 
   // Wordmark — shrunk and pinned near the top, leaving the middle for the ship
   // and the bottom for the prompt instead of the old single centred stack.
@@ -458,6 +467,15 @@ function makeSfx(): Sfx {
   let bgmTimer: ReturnType<typeof setTimeout> | null = null;
   let bgmStep = 0;
   let bgmNextTime = 0;
+  // unlock() and the tap-to-start phase flip happen inside the same gesture,
+  // so by the time this fires bgmWanted may already be back to false - but
+  // AudioContext.resume() is async and its real-world latency isn't
+  // something this code controls, so the FIRST unlock attempted while BGM
+  // was wanted gets a short, wall-clock (not frame-based) grace window to
+  // actually start, however long resume() ends up taking. Real time, not
+  // frames, because this has nothing to do with the sim - a suspended tab
+  // or a slow device shouldn't get a shorter window.
+  let bgmGraceUntil = 0;
 
   const bgmNote = (freq: number, t0: number, dur: number, vol: number, type: OscillatorType): void => {
     if(!ctx) return;
@@ -498,7 +516,8 @@ function makeSfx(): Sfx {
   // currently do" — called on every unlock() and every setBgmWanted(), since
   // the context typically isn't running yet the first time either fires.
   function syncBgm(): void {
-    if(bgmWanted && ctx && ctx.state === "running"){
+    const wanted = bgmWanted || performance.now() < bgmGraceUntil;
+    if(wanted && ctx && ctx.state === "running"){
       if(!bgmOn){ bgmOn = true; bgmStep = 0; bgmNextTime = ctx.currentTime + 0.05; bgmTick(); }
     } else if(bgmOn){
       bgmOn = false;
@@ -530,7 +549,11 @@ function makeSfx(): Sfx {
     osc.start(t0); osc.stop(t0 + dur);
   };
   return {
-    unlock(){ void ensure(); syncBgm(); },                // call from inside a user gesture
+    unlock(){                                              // call from inside a user gesture
+      if(bgmWanted) bgmGraceUntil = performance.now() + 700;
+      void ensure();
+      syncBgm();
+    },
     setMuted(m){ muted = m; },
     setBgmWanted(w){ bgmWanted = w; syncBgm(); },
     shoot(){ blip(880, 320, 0.07, "square", 0.05); },        // player: bright descending pew
@@ -815,6 +838,7 @@ const BOSS_COLS = 56, BOSS_ROWS = 64;
 const CORE_CHARGE = 55;    // beam charge-up (telegraph) frames
 const BEAM_TIME = 120;     // ~2s beam (boss freezes)
 const INVULN = 60;         // player i-frames after any hit (beam can't drain all lives)
+const PART2_IMMUNE = 300;  // 5s @ 60fps: shielded the instant bar 1 empties, while the forced beam plays
 
 // Boss thrusters — 4 jets off the back vents (2 inner shoulder, 2 outer), flames trail UP.
 // Orange palette matched to the enemy grunts (EFLAME) so the faction reads consistently.
@@ -888,9 +912,17 @@ function drawMothership(ctx: CanvasRenderingContext2D, x: number, y: number, hp:
 // at y=150*sc pushed it hard against the screen edge and straight through the
 // HUD's wave label. Screen-pinned it can neither clip nor collide, and it stops
 // jittering as the boss drifts.
-function drawBossBar(ctx: CanvasRenderingContext2D, W: number, hp: number, maxHp: number, sc: number): void {
-  const barW = Math.min(200*sc, W*0.5), barH = 9*sc;
-  const x0 = W/2 - barW/2, barTop = 22*sc;
+// Two stacked segments, not one continuous bar: the top segment is the first
+// half of HP (side-cannons only, damageable) and drains first; the bottom
+// segment holds full/untouched until the top empties, then drains for the
+// rest of the fight (overdrive - beam, fires alongside the cannons). Reads
+// as two distinct "lives" for the boss rather than one gradient.
+function drawBossBar(ctx: CanvasRenderingContext2D, W: number, hp: number, maxHp: number, sc: number, immune: boolean): void {
+  const barW = Math.min(200*sc, W*0.5), barH = 7*sc, gap = 3*sc;
+  const x0 = W/2 - barW/2, bar1Top = 22*sc, bar2Top = bar1Top + barH + gap;
+  const half = maxHp/2;
+  const f1 = Math.max(0, Math.min(1, (hp-half)/half));   // 100% -> 50%
+  const f2 = Math.max(0, Math.min(1, hp/half));           // 50% -> 0% (pinned full above 50%)
   ctx.save();
   ctx.textAlign="center"; ctx.textBaseline="top";
   ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
@@ -898,14 +930,18 @@ function drawBossBar(ctx: CanvasRenderingContext2D, W: number, hp: number, maxHp
   // the group gets a dark backing to stay legible over whatever is behind it.
   const padX = 10*sc, padY = 5*sc;
   const panelW = Math.max(barW, ctx.measureText("FINAL BOSS").width) + padX*2;
+  const panelBottom = bar2Top + barH;
   ctx.fillStyle = "rgba(5,10,26,0.72)";
-  ctx.fillRect(W/2 - panelW/2, 8*sc - padY, panelW, (barTop + barH) - 8*sc + padY*2);
+  ctx.fillRect(W/2 - panelW/2, 8*sc - padY, panelW, panelBottom - 8*sc + padY*2);
   ctx.fillStyle="#caa24a";
   ctx.fillText("FINAL BOSS", W/2, 8*sc);
-  ctx.fillStyle="#23232c"; ctx.fillRect(x0, barTop, barW, barH);
-  ctx.fillStyle = hp>maxHp*0.5?"#a23cdb":hp>maxHp*0.25?"#e0a020":"#ff2e4d";
-  ctx.fillRect(x0, barTop, barW*Math.max(0, hp/maxHp), barH);
-  ctx.strokeStyle="rgba(255,255,255,0.7)"; ctx.lineWidth=1; ctx.strokeRect(x0, barTop, barW, barH);
+
+  ctx.fillStyle="#23232c"; ctx.fillRect(x0, bar1Top, barW, barH); ctx.fillRect(x0, bar2Top, barW, barH);
+  ctx.fillStyle="#a23cdb"; ctx.fillRect(x0, bar1Top, barW*f1, barH);
+  ctx.fillStyle = immune ? "#c9d3e6" : (f2>0.4 ? "#ff7a2b" : "#ff2e4d");
+  ctx.fillRect(x0, bar2Top, barW*f2, barH);
+  ctx.strokeStyle="rgba(255,255,255,0.7)"; ctx.lineWidth=1;
+  ctx.strokeRect(x0, bar1Top, barW, barH); ctx.strokeRect(x0, bar2Top, barW, barH);
   ctx.restore();
 }
 
@@ -967,7 +1003,7 @@ function initGame(W: number, H: number, mobile: boolean): GameState {
     player:{ x:W/2, y:playerY, w:28*sc, h:28*sc, vx:0, hitT:0 },
     bullets:[], enemyBullets:[],
     enemies:makeWave(1,W,H,sc,mobile),
-    mothership:{ x:W/2, y: 150*sc, w:BOSS_COLS*BOSS_PX(sc), h:BOSS_ROWS*BOSS_PX(sc), hp:30, maxHp:30, vx:1.5*sc*SPEED, sideCD:0, coreCD:Math.floor(rand(5,7)*60), chargeT:0, beamT:0 },
+    mothership:{ x:W/2, y: 150*sc, w:BOSS_COLS*BOSS_PX(sc), h:BOSS_ROWS*BOSS_PX(sc), hp:30, maxHp:30, vx:1.5*sc*SPEED, sideCD:0, coreCD:Math.floor(rand(5,7)*60), chargeT:0, beamT:0, immuneT:0 },
     phase:"title", wave:1, score:0, lives:MAX_LIVES, enemyDir:1,
     fireCD:0, enemyFireCD:60, bossFireCD:90,
     introT: START_TOTAL_FRAMES,
@@ -1347,7 +1383,7 @@ export default function InvadersGame(){
         });
         if(s.enemies.every(e=>!e.alive)){
           s.wave++;
-          if(s.wave>3){ s.phase="boss"; s.enemyBullets=[]; s.introT=120; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; }
+          if(s.wave>3){ s.phase="boss"; s.enemyBullets=[]; s.introT=120; s.mothership.sideCD=30; s.mothership.coreCD=Math.floor(rand(5,7)*60); s.mothership.chargeT=0; s.mothership.beamT=0; s.mothership.immuneT=0; }
           else{ s.enemies=makeWave(s.wave,W,H,sc,mobile); s.enemyDir=1; s.waveMsg=90; s.introT=90; }
         }
       }
@@ -1356,6 +1392,7 @@ export default function InvadersGame(){
         const m=s.mothership;
         const bp=BOSS_PX(sc);
         const margin=BOSS_COLS*bp*0.5 + 6;
+        if(m.immuneT>0) m.immuneT--;
         if(m.beamT<=0){ m.x+=m.vx; if(m.x>W-margin||m.x<margin) m.vx*=-1; }  // freeze while the beam fires
 
         const part=bossPart(m.hp/m.maxHp);
@@ -1396,7 +1433,20 @@ export default function InvadersGame(){
         const hbW=26*bp, hbH=54*bp;
         s.bullets=s.bullets.filter(b=>{
           if(overlap({x:b.x-2*sc,y:b.y-7*sc,w:4*sc,h:14*sc},{x:m.x-hbW/2,y:m.y-hbH/2,w:hbW,h:hbH})){
+            if(m.immuneT>0){
+              addParticles(b.x,b.y,"#8fa0c0",3);   // harmless deflect - shielded, no damage/score
+              return false;
+            }
+            const wasBar1 = m.hp > m.maxHp*0.5;
             m.hp--; addParticles(b.x,b.y,part.color,5); s.score+=5;
+            // Bar 1 (the first health bar) just emptied - force the overdrive
+            // beam immediately instead of waiting on the usual coreCD roll,
+            // and shield the boss for PART2_IMMUNE frames while it plays out.
+            if(wasBar1 && m.hp>0 && m.hp<=m.maxHp*0.5){
+              m.immuneT = PART2_IMMUNE;
+              m.chargeT = CORE_CHARGE;
+              m.beamT = 0;
+            }
             if(m.hp<=0){ addParticles(m.x,m.y,"#ff7a2b",30); addParticles(m.x-40*sc,m.y,"#caa24a",18); addParticles(m.x+40*sc,m.y,"#ff2e4d",18); s.phase="won"; }
             return false;
           }
@@ -1410,8 +1460,7 @@ export default function InvadersGame(){
 
       // ── Draw ──
       ctx.fillStyle="#050a1a"; ctx.fillRect(0,0,W,H);
-      s.stars.forEach(st=>{ ctx.globalAlpha=st.b; ctx.fillStyle="#fff"; ctx.fillRect(st.x,st.y,st.size,st.size); });
-      ctx.globalAlpha=1;
+      drawStarfield(ctx, H, sc, s.t, s.stars);
 
       // Held back until the title's fully dissolved - the formation "enters"
       // once the wordmark is out of the way, instead of sitting there behind it.
@@ -1477,7 +1526,7 @@ export default function InvadersGame(){
           // The bar's own "FINAL BOSS" caption names the phase, so a wave label
           // here would just be a second thing in the same 20px of screen.
           // Held back during the intro so it doesn't overlap the GET READY blink.
-          if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc);
+          if(s.introT<=0) drawBossBar(ctx, W, s.mothership.hp, s.mothership.maxHp, sc, s.mothership.immuneT>0);
         } else {
           ctx.fillStyle="#5a6b88"; ctx.font=`bold ${Math.round(11*sc)}px ${FONT}`;
           ctx.fillText(`WAVE ${s.wave}`, W/2, 8*sc);
